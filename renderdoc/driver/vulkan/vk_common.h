@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -77,10 +77,6 @@
 
 typedef VkBufferDeviceAddressInfo VkBufferDeviceAddressInfoEXT;
 typedef VkPhysicalDeviceBufferDeviceAddressFeatures VkPhysicalDeviceBufferDeviceAddressFeaturesKHR;
-
-// enable this to cause every internal QueueSubmit to immediately call DeviceWaitIdle(), and to only
-// submit one command buffer at once to narrow down the cause of device lost errors
-#define SINGLE_FLUSH_VALIDATE OPTION_OFF
 
 // enable this to get verbose debugging about when/where/why partial command buffer replay is
 // happening
@@ -929,6 +925,7 @@ enum class VulkanChunk : uint32_t
   vkCmdEndRendering,
   vkCmdSetFragmentShadingRateKHR,
   vkSetDeviceMemoryPriorityEXT,
+  vkCmdSetAttachmentFeedbackLoopEnableEXT,
   Max,
 };
 
@@ -1136,6 +1133,7 @@ DECLARE_REFLECTION_STRUCT(VkPhysicalDevice16BitStorageFeatures);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDevice4444FormatsFeaturesEXT);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDevice8BitStorageFeatures);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceASTCDecodeFeaturesEXT);
+DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceAttachmentFeedbackLoopDynamicStateFeaturesEXT);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceAttachmentFeedbackLoopLayoutFeaturesEXT);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceBorderColorSwizzleFeaturesEXT);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceBufferDeviceAddressFeatures);
@@ -1182,6 +1180,7 @@ DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceGroupProperties);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceHostQueryResetFeatures);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceIDProperties);
+DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceImage2DViewOf3DFeaturesEXT);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceImageFormatInfo2);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceImagelessFramebufferFeatures);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceImageRobustnessFeatures);
@@ -1215,6 +1214,8 @@ DECLARE_REFLECTION_STRUCT(VkPhysicalDevicePresentWaitFeaturesKHR);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDevicePrimitivesGeneratedQueryFeaturesEXT);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDevicePrimitiveTopologyListRestartFeaturesEXT);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDevicePrivateDataFeatures);
+DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceProvokingVertexFeaturesEXT);
+DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceProvokingVertexPropertiesEXT);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceProperties2);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceProtectedMemoryFeatures);
 DECLARE_REFLECTION_STRUCT(VkPhysicalDeviceProtectedMemoryProperties);
@@ -1294,6 +1295,7 @@ DECLARE_REFLECTION_STRUCT(VkPipelineMultisampleStateCreateInfo);
 DECLARE_REFLECTION_STRUCT(VkPipelineRasterizationConservativeStateCreateInfoEXT);
 DECLARE_REFLECTION_STRUCT(VkPipelineRasterizationDepthClipStateCreateInfoEXT);
 DECLARE_REFLECTION_STRUCT(VkPipelineRasterizationLineStateCreateInfoEXT);
+DECLARE_REFLECTION_STRUCT(VkPipelineRasterizationProvokingVertexStateCreateInfoEXT);
 DECLARE_REFLECTION_STRUCT(VkPipelineRasterizationStateCreateInfo);
 DECLARE_REFLECTION_STRUCT(VkPipelineRasterizationStateStreamCreateInfoEXT);
 DECLARE_REFLECTION_STRUCT(VkPipelineRenderingCreateInfo);
@@ -1541,6 +1543,7 @@ DECLARE_DESERIALISE_TYPE(VkPhysicalDevice16BitStorageFeatures);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDevice4444FormatsFeaturesEXT);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDevice8BitStorageFeatures);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceASTCDecodeFeaturesEXT);
+DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceAttachmentFeedbackLoopDynamicStateFeaturesEXT);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceAttachmentFeedbackLoopLayoutFeaturesEXT);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceBorderColorSwizzleFeaturesEXT);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceCoherentMemoryFeaturesAMD);
@@ -1585,6 +1588,7 @@ DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceGroupProperties);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceHostQueryResetFeatures);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceIDProperties);
+DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceImage2DViewOf3DFeaturesEXT);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceImageFormatInfo2);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceImagelessFramebufferFeatures);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceImageRobustnessFeatures);
@@ -1618,6 +1622,8 @@ DECLARE_DESERIALISE_TYPE(VkPhysicalDevicePresentWaitFeaturesKHR);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDevicePrimitivesGeneratedQueryFeaturesEXT);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDevicePrimitiveTopologyListRestartFeaturesEXT);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDevicePrivateDataFeatures);
+DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceProvokingVertexFeaturesEXT);
+DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceProvokingVertexPropertiesEXT);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceProperties2);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceProtectedMemoryFeatures);
 DECLARE_DESERIALISE_TYPE(VkPhysicalDeviceProtectedMemoryProperties);
@@ -1697,6 +1703,7 @@ DECLARE_DESERIALISE_TYPE(VkPipelineMultisampleStateCreateInfo);
 DECLARE_DESERIALISE_TYPE(VkPipelineRasterizationConservativeStateCreateInfoEXT);
 DECLARE_DESERIALISE_TYPE(VkPipelineRasterizationDepthClipStateCreateInfoEXT);
 DECLARE_DESERIALISE_TYPE(VkPipelineRasterizationLineStateCreateInfoEXT);
+DECLARE_DESERIALISE_TYPE(VkPipelineRasterizationProvokingVertexStateCreateInfoEXT);
 DECLARE_DESERIALISE_TYPE(VkPipelineRasterizationStateCreateInfo);
 DECLARE_DESERIALISE_TYPE(VkPipelineRasterizationStateStreamCreateInfoEXT);
 DECLARE_DESERIALISE_TYPE(VkPipelineRenderingCreateInfo);
@@ -2058,6 +2065,7 @@ DECLARE_REFLECTION_ENUM(VkPresentGravityFlagBitsEXT);
 DECLARE_REFLECTION_ENUM(VkPresentModeKHR);
 DECLARE_REFLECTION_ENUM(VkPresentScalingFlagBitsEXT);
 DECLARE_REFLECTION_ENUM(VkPrimitiveTopology);
+DECLARE_REFLECTION_ENUM(VkProvokingVertexModeEXT);
 DECLARE_REFLECTION_ENUM(VkRenderingFlagBits);
 DECLARE_REFLECTION_ENUM(VkQueryControlFlagBits);
 DECLARE_REFLECTION_ENUM(VkQueryPipelineStatisticFlagBits);

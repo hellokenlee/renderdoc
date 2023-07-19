@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,6 +30,8 @@
 #include "d3d12_device.h"
 #include "d3d12_manager.h"
 #include "d3d12_resources.h"
+
+RDOC_EXTERN_CONFIG(bool, D3D12_Debug_SingleSubmitFlushing);
 
 bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
 {
@@ -103,28 +105,22 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
 
       const bool isUploadHeap = (heapProps.Type == D3D12_HEAP_TYPE_UPLOAD);
 
-      heapProps.Type = D3D12_HEAP_TYPE_READBACK;
-      heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-      heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-      heapProps.CreationNodeMask = 1;
-      heapProps.VisibleNodeMask = 1;
-
       desc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
       ID3D12Resource *copyDst = NULL;
-      hr = m_Device->GetReal()->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
-                                                        D3D12_RESOURCE_STATE_COPY_DEST, NULL,
-                                                        __uuidof(ID3D12Resource), (void **)&copyDst);
+      hr = m_Device->CreateInitialStateBuffer(desc, &copyDst);
 
       if(nonresident)
         m_Device->GetReal()->MakeResident(1, &unwrappedPageable);
 
-      const rdcarray<D3D12_RESOURCE_STATES> &states = m_Device->GetSubresourceStates(GetResID(res));
+      const SubresourceStateVector &states = m_Device->GetSubresourceStates(GetResID(res));
       RDCASSERT(states.size() == 1);
 
       D3D12_RESOURCE_BARRIER barrier;
-      const bool needsTransition =
-          !isUploadHeap && ((states[0] & D3D12_RESOURCE_STATE_COPY_SOURCE) == 0);
+      // upload heap resources can't be transitioned, and any resources in the new layouts don't
+      // need to either since each submit does a big flush
+      const bool needsTransition = !isUploadHeap && states[0].IsStates() &&
+                                   (states[0].ToStates() & D3D12_RESOURCE_STATE_COPY_SOURCE) == 0;
 
       if(needsTransition)
       {
@@ -132,7 +128,7 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
         barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
         barrier.Transition.pResource = r->GetReal();
         barrier.Transition.Subresource = (UINT)0;
-        barrier.Transition.StateBefore = states[0];
+        barrier.Transition.StateBefore = states[0].ToStates();
         barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
       }
 
@@ -167,13 +163,11 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
 
         m_Device->GetReal()->Evict(1, &unwrappedPageable);
       }
-      else
+      else if(D3D12_Debug_SingleSubmitFlushing())
       {
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
         m_Device->CloseInitialStateList();
         m_Device->ExecuteLists(NULL, true);
         m_Device->FlushLists(true);
-#endif
       }
 
       initContents = D3D12InitialContents(copyDst);
@@ -184,7 +178,7 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
         m_Device->GetReal()->MakeResident(1, &unwrappedPageable);
 
       ID3D12Resource *arrayTexture = NULL;
-      D3D12_RESOURCE_STATES destState = D3D12_RESOURCE_STATE_COPY_SOURCE;
+      BarrierSet::AccessType accessType = BarrierSet::CopySourceAccess;
       ID3D12Resource *unwrappedCopySource = r->GetReal();
 
       bool isDepth =
@@ -218,39 +212,16 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
             __uuidof(ID3D12Resource), (void **)&arrayTexture);
         RDCASSERTEQUAL(hr, S_OK);
 
-        destState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        accessType = BarrierSet::SRVAccess;
         isMSAA = true;
       }
 
-      ID3D12GraphicsCommandList *list = Unwrap(m_Device->GetInitialStateList());
+      ID3D12GraphicsCommandListX *list = m_Device->GetInitialStateList();
 
-      rdcarray<D3D12_RESOURCE_BARRIER> barriers;
+      BarrierSet barriers;
 
-      {
-        const rdcarray<D3D12_RESOURCE_STATES> &states = m_Device->GetSubresourceStates(GetResID(r));
-
-        barriers.reserve(states.size());
-
-        for(size_t i = 0; i < states.size(); i++)
-        {
-          if(states[i] & destState)
-            continue;
-
-          D3D12_RESOURCE_BARRIER barrier;
-          barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-          barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-          barrier.Transition.pResource = r->GetReal();
-          barrier.Transition.Subresource = (UINT)i;
-          barrier.Transition.StateBefore = states[i];
-          barrier.Transition.StateAfter = destState;
-
-          barriers.push_back(barrier);
-        }
-
-        // transition to copy dest
-        if(!barriers.empty())
-          list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
-      }
+      barriers.Configure(r, m_Device->GetSubresourceStates(GetResID(r)), accessType);
+      barriers.Apply(list);
 
       if(arrayTexture)
       {
@@ -264,7 +235,7 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
         m_Device->GetDebugManager()->CopyTex2DMSToArray(NULL, arrayTexture, r->GetReal());
 
         // open the initial state list again for the remainder of the work
-        list = Unwrap(m_Device->GetInitialStateList());
+        list = m_Device->GetInitialStateList();
 
         D3D12_RESOURCE_BARRIER b = {};
         b.Transition.pResource = arrayTexture;
@@ -272,17 +243,11 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
         b.Transition.StateBefore =
             isDepth ? D3D12_RESOURCE_STATE_DEPTH_WRITE : D3D12_RESOURCE_STATE_RENDER_TARGET;
         b.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-        list->ResourceBarrier(1, &b);
+        // arrayTexture is not wrapped so we need to call the unwrapped command directly
+        Unwrap(list)->ResourceBarrier(1, &b);
 
         unwrappedCopySource = arrayTexture;
       }
-
-      D3D12_HEAP_PROPERTIES heapProps;
-      heapProps.Type = D3D12_HEAP_TYPE_READBACK;
-      heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-      heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-      heapProps.CreationNodeMask = 1;
-      heapProps.VisibleNodeMask = 1;
 
       D3D12_RESOURCE_DESC bufDesc;
 
@@ -318,6 +283,12 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
       rdcarray<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> copyLayouts;
       rdcarray<uint32_t> subresources;
 
+      if(IsBlockFormat(desc.Format) && (desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS))
+      {
+        RDCDEBUG("Removing UAV flag from BCn desc to allow GetCopyableFootprints");
+        desc.Flags &= ~D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+      }
+
       for(UINT i = 0; i < numSubresources; i++)
       {
         // skip non-MSAA sparse subresources that are not mapped at all
@@ -326,6 +297,12 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
 
         UINT64 subSize = 0;
         m_Device->GetCopyableFootprints(&desc, i, 1, bufDesc.Width, &layout, NULL, NULL, &subSize);
+
+        if(subSize == ~0ULL)
+        {
+          RDCERR("Failed to call GetCopyableFootprints on %s! skipping copy", ToStr(id).c_str());
+          continue;
+        }
 
         copyLayouts.push_back(layout);
         subresources.push_back(i);
@@ -337,9 +314,7 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
         bufDesc.Width = 1U;
 
       ID3D12Resource *copyDst = NULL;
-      HRESULT hr = m_Device->GetReal()->CreateCommittedResource(
-          &heapProps, D3D12_HEAP_FLAG_NONE, &bufDesc, D3D12_RESOURCE_STATE_COPY_DEST, NULL,
-          __uuidof(ID3D12Resource), (void **)&copyDst);
+      HRESULT hr = m_Device->CreateInitialStateBuffer(bufDesc, &copyDst);
 
       if(SUCCEEDED(hr))
       {
@@ -355,7 +330,7 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
           dst.pResource = copyDst;
           dst.PlacedFootprint = copyLayouts[i];
 
-          list->CopyTextureRegion(&dst, 0, 0, 0, &src, NULL);
+          Unwrap(list)->CopyTextureRegion(&dst, 0, 0, 0, &src, NULL);
         }
       }
       else
@@ -370,11 +345,7 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
         subresources = {~0U};
 
       // transition back
-      for(size_t i = 0; i < barriers.size(); i++)
-        std::swap(barriers[i].Transition.StateBefore, barriers[i].Transition.StateAfter);
-
-      if(!barriers.empty())
-        list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
+      barriers.Unapply(list);
 
       if(nonresident || arrayTexture)
       {
@@ -386,13 +357,11 @@ bool D3D12ResourceManager::Prepare_InitialState(ID3D12DeviceChild *res)
         if(nonresident)
           m_Device->GetReal()->Evict(1, &unwrappedPageable);
       }
-      else
+      else if(D3D12_Debug_SingleSubmitFlushing())
       {
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
         m_Device->CloseInitialStateList();
         m_Device->ExecuteLists(NULL, true);
         m_Device->FlushLists(true);
-#endif
       }
 
       SAFE_RELEASE(arrayTexture);
@@ -1112,7 +1081,7 @@ void D3D12ResourceManager::Apply_InitialState(ID3D12DeviceChild *live,
     }
     else if(data.tag == D3D12InitialContents::Copy || data.tag == D3D12InitialContents::ForceCopy)
     {
-      ID3D12Resource *copyDst = Unwrap((ID3D12Resource *)live);
+      ID3D12Resource *copyDst = (ID3D12Resource *)live;
 
       if(!copyDst)
       {
@@ -1157,7 +1126,7 @@ void D3D12ResourceManager::Apply_InitialState(ID3D12DeviceChild *live,
 
         if(copyDst->GetDesc().Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
         {
-          hr = copyDst->Map(0, NULL, (void **)&dst);
+          hr = Unwrap(copyDst)->Map(0, NULL, (void **)&dst);
           m_Device->CheckHRESULT(hr);
 
           if(FAILED(hr))
@@ -1170,7 +1139,7 @@ void D3D12ResourceManager::Apply_InitialState(ID3D12DeviceChild *live,
             memcpy(dst, src, (size_t)copyDst->GetDesc().Width);
 
           if(dst)
-            copyDst->Unmap(0, NULL);
+            Unwrap(copyDst)->Unmap(0, NULL);
         }
         else
         {
@@ -1190,7 +1159,7 @@ void D3D12ResourceManager::Apply_InitialState(ID3D12DeviceChild *live,
 
           for(UINT i = 0; i < numSubresources; i++)
           {
-            hr = copyDst->Map(i, NULL, (void **)&dst);
+            hr = Unwrap(copyDst)->Map(i, NULL, (void **)&dst);
             m_Device->CheckHRESULT(hr);
 
             if(FAILED(hr))
@@ -1217,7 +1186,7 @@ void D3D12ResourceManager::Apply_InitialState(ID3D12DeviceChild *live,
             }
 
             if(dst)
-              copyDst->Unmap(i, NULL);
+              Unwrap(copyDst)->Unmap(i, NULL);
           }
 
           delete[] layouts;
@@ -1235,51 +1204,29 @@ void D3D12ResourceManager::Apply_InitialState(ID3D12DeviceChild *live,
           return;
         }
 
-        ID3D12GraphicsCommandList *list = Unwrap(m_Device->GetInitialStateList());
+        ID3D12GraphicsCommandListX *list = m_Device->GetInitialStateList();
 
         if(!list)
           return;
 
-        rdcarray<D3D12_RESOURCE_BARRIER> barriers;
+        BarrierSet barriers;
 
-        const rdcarray<D3D12_RESOURCE_STATES> &states =
-            m_Device->GetSubresourceStates(GetResID(live));
-
-        barriers.reserve(states.size());
-
-        for(size_t i = 0; i < states.size(); i++)
-        {
-          if(states[i] & D3D12_RESOURCE_STATE_COPY_DEST)
-            continue;
-
-          D3D12_RESOURCE_BARRIER barrier;
-          barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-          barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-          barrier.Transition.pResource = copyDst;
-          barrier.Transition.Subresource = (UINT)i;
-          barrier.Transition.StateBefore = states[i];
-          barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
-
-          barriers.push_back(barrier);
-        }
-
-        // transition to copy dest
-        if(!barriers.empty())
-          list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
+        barriers.Configure(copyDst, m_Device->GetSubresourceStates(GetResID(live)),
+                           BarrierSet::CopyDestAccess);
+        barriers.Apply(list);
 
         if(copyDst->GetDesc().Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
         {
           D3D12_RESOURCE_DESC srcDesc = copySrc->GetDesc();
           D3D12_RESOURCE_DESC dstDesc = copyDst->GetDesc();
 
-          list->CopyBufferRegion(copyDst, 0, Unwrap(copySrc), 0,
-                                 RDCMIN(srcDesc.Width, dstDesc.Width));
+          list->CopyBufferRegion(copyDst, 0, copySrc, 0, RDCMIN(srcDesc.Width, dstDesc.Width));
         }
         else if(copyDst->GetDesc().SampleDesc.Count > 1 || data.tag == D3D12InitialContents::ForceCopy)
         {
           // MSAA texture was pre-uploaded and decoded, just copy the texture.
           // Similarly for created initial states
-          list->CopyResource(copyDst, Unwrap(copySrc));
+          list->CopyResource(copyDst, copySrc);
         }
         else
         {
@@ -1313,6 +1260,12 @@ void D3D12ResourceManager::Apply_InitialState(ID3D12DeviceChild *live,
           UINT64 offset = 0;
           UINT64 subSize = 0;
 
+          if(IsBlockFormat(desc.Format) && (desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS))
+          {
+            RDCDEBUG("Removing UAV flag from BCn desc to allow GetCopyableFootprints");
+            desc.Flags &= ~D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+          }
+
           for(UINT i = 0; i < numSubresources; i++)
           {
             // if we have a list of subresources included, only copy those
@@ -1326,10 +1279,16 @@ void D3D12ResourceManager::Apply_InitialState(ID3D12DeviceChild *live,
             dst.SubresourceIndex = i;
 
             src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-            src.pResource = Unwrap(copySrc);
+            src.pResource = copySrc;
 
             m_Device->GetCopyableFootprints(&desc, i, 1, offset, &src.PlacedFootprint, NULL, NULL,
                                             &subSize);
+
+            if(subSize == ~0ULL)
+            {
+              RDCERR("Failed to call GetCopyableFootprints on %s! skipping copy", ToStr(id).c_str());
+              continue;
+            }
 
             list->CopyTextureRegion(&dst, 0, 0, 0, &src, NULL);
 
@@ -1346,18 +1305,14 @@ void D3D12ResourceManager::Apply_InitialState(ID3D12DeviceChild *live,
           }
         }
 
-        // transition back to whatever it was before
-        for(size_t i = 0; i < barriers.size(); i++)
-          std::swap(barriers[i].Transition.StateBefore, barriers[i].Transition.StateAfter);
+        barriers.Unapply(list);
 
-        if(!barriers.empty())
-          list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
-
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-        m_Device->CloseInitialStateList();
-        m_Device->ExecuteLists(NULL, true);
-        m_Device->FlushLists(true);
-#endif
+        if(D3D12_Debug_SingleSubmitFlushing())
+        {
+          m_Device->CloseInitialStateList();
+          m_Device->ExecuteLists(NULL, true);
+          m_Device->FlushLists(true);
+        }
       }
     }
     else

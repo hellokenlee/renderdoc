@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,7 +24,7 @@
 
 #include "lz4io.h"
 
-static const uint64_t lz4BlockSize = 64 * 1024;
+static const uint64_t lz4BlockSize = 1024 * 1024;
 
 LZ4Compressor::LZ4Compressor(StreamWriter *write, Ownership own) : Compressor(write, own)
 {
@@ -57,7 +57,7 @@ bool LZ4Compressor::Write(const void *data, uint64_t numBytes)
   // The basic plan is:
   // Write into page N incrementally until it is completely full. When full, flush it out to lz4 and
   // swap pages.
-  // This keeps lz4 happy with 64kb of history each time it compresses.
+  // This keeps lz4 happy with 1 block of history each time it compresses.
   // If we are writing some data the crosses the boundary between pages, we write the part that will
   // fit on one page, flush & swap, write the rest into the next page.
 
@@ -112,7 +112,7 @@ bool LZ4Compressor::Write(const void *data, uint64_t numBytes)
 bool LZ4Compressor::Finish()
 {
   // This function just writes the current page and closes lz4. Since we assume all blocks are
-  // precisely 64kb in size
+  // uniform in size
   // only the last one can be smaller, so we only write a partial page when finishing.
   // Calling Write() after Finish() is illegal
   return FlushPage0();
@@ -286,6 +286,7 @@ bool LZ4Decompressor::FillPage0()
       SET_ERROR_RESULT(m_Error, ResultCode::CompressionFailed,
                        "LZ4 decompression encountered invalid compressed block size: %i", compSize);
     }
+    return false;
   }
 
   success &= m_Read->Read(m_CompressBuffer, compSize);

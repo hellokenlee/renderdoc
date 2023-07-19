@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2022 Baldur Karlsson
+ * Copyright (c) 2022-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -117,7 +117,8 @@
 }
 
 - (id<MTLArgumentEncoder>)newArgumentEncoderWithBufferIndex:(NSUInteger)bufferIndex
-    API_AVAILABLE(macos(10.13), ios(11.0))
+    API_DEPRECATED("Use MTLDevice's newArgumentEncoderWithBufferBinding: instead",
+                   macos(10.13, 13.0), ios(11.0, 16.0))
 {
   METAL_NOT_HOOKED();
   return [self.real newArgumentEncoderWithBufferIndex:bufferIndex];

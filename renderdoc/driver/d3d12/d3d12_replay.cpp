@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -114,6 +114,8 @@ void D3D12Replay::Initialise(IDXGIFactory1 *factory)
       SAFE_RELEASE(pDXGIAdapter);
     }
   }
+
+  m_pDevice->SetDriverInfo(m_DriverInfo);
 }
 
 RDResult D3D12Replay::FatalErrorCheck()
@@ -299,7 +301,11 @@ void D3D12Replay::ReplayLog(uint32_t endEventID, ReplayLogType replayType)
     if(replayed)
       return;
   }
+
   m_pDevice->ReplayLog(0, endEventID, replayType);
+
+  if(replayType == eReplay_WithoutDraw)
+    m_pDevice->GPUSyncAllQueues();
 }
 
 SDFile *D3D12Replay::GetStructuredFile()
@@ -358,7 +364,7 @@ BufferDescription D3D12Replay::GetBuffer(ResourceId id)
 
   auto it = m_pDevice->GetResourceList().find(id);
 
-  if(it == m_pDevice->GetResourceList().end())
+  if(it == m_pDevice->GetResourceList().end() || it->second == NULL)
     return ret;
 
   D3D12_RESOURCE_DESC desc = it->second->GetDesc();
@@ -399,7 +405,7 @@ TextureDescription D3D12Replay::GetTexture(ResourceId id)
 
   auto it = m_pDevice->GetResourceList().find(id);
 
-  if(it == m_pDevice->GetResourceList().end())
+  if(it == m_pDevice->GetResourceList().end() || it->second == NULL)
     return ret;
 
   D3D12_RESOURCE_DESC desc = it->second->GetDesc();
@@ -944,6 +950,14 @@ void D3D12Replay::FillResourceView(D3D12Pipe::View &view, const D3D12Descriptor 
         view.firstSlice = uav.Texture2DArray.FirstArraySlice & 0xffff;
         view.firstMip = uav.Texture2DArray.MipSlice & 0xff;
       }
+      else if(uav.ViewDimension == D3D12_UAV_DIMENSION_TEXTURE2DMS)
+      {
+      }
+      else if(uav.ViewDimension == D3D12_UAV_DIMENSION_TEXTURE2DMSARRAY)
+      {
+        view.numSlices = uav.Texture2DMSArray.ArraySize & 0xffff;
+        view.firstSlice = uav.Texture2DMSArray.FirstArraySlice & 0xffff;
+      }
       else if(uav.ViewDimension == D3D12_UAV_DIMENSION_TEXTURE3D)
       {
         view.numSlices = uav.Texture3D.WSize & 0xffff;
@@ -971,13 +985,18 @@ void D3D12Replay::FillResourceView(D3D12Pipe::View &view, const D3D12Descriptor 
   desc->GetHeap()->SetToViewCache(desc->GetHeapIndex(), view);
 }
 
-void D3D12Replay::FillSampler(D3D12Pipe::Sampler &samp, const D3D12_SAMPLER_DESC &sampDesc)
+void D3D12Replay::FillSampler(D3D12Pipe::Sampler &samp, const D3D12_SAMPLER_DESC2 &sampDesc)
 {
   samp.addressU = MakeAddressMode(sampDesc.AddressU);
   samp.addressV = MakeAddressMode(sampDesc.AddressV);
   samp.addressW = MakeAddressMode(sampDesc.AddressW);
 
-  samp.borderColor = sampDesc.BorderColor;
+  samp.borderColorValue.uintValue = sampDesc.UintBorderColor;
+  samp.borderColorType =
+      ((sampDesc.Flags & D3D12_SAMPLER_FLAG_UINT_BORDER_COLOR) != 0 ? CompType::UInt
+                                                                    : CompType::Float);
+
+  samp.unnormalized = (sampDesc.Flags & D3D12_SAMPLER_FLAG_NON_NORMALIZED_COORDINATES) != 0;
 
   samp.compareFunction = MakeCompareFunc(sampDesc.ComparisonFunc);
   samp.filter = MakeFilter(sampDesc.Filter);
@@ -1230,12 +1249,18 @@ void D3D12Replay::FillRootElements(uint32_t eventId, const D3D12RenderState::Roo
         if(heap)
         {
           desc = (D3D12Descriptor *)heap->GetCPUDescriptorHandleForHeapStart().ptr;
+          const D3D12Descriptor *endDesc = desc + heap->GetNumDescriptors();
           desc += e->offset;
           desc += offset;
 
-          if(num >= heap->GetNumDescriptors())
+          if(desc >= endDesc)
           {
-            UINT availDescriptors = heap->GetNumDescriptors() - offset - UINT(e->offset);
+            RDCERR("Binding points past end of corresponding heap.");
+            num = 0;
+          }
+          else if(desc + num >= endDesc)
+          {
+            const UINT availDescriptors = UINT(endDesc - desc);
 
             const Bindpoint *highestBind = NULL;
             UINT maxBindReg = shaderReg + availDescriptors;
@@ -1296,7 +1321,7 @@ void D3D12Replay::FillRootElements(uint32_t eventId, const D3D12RenderState::Roo
 
             if(desc)
             {
-              const D3D12_SAMPLER_DESC &sampDesc = desc->GetSampler();
+              const D3D12_SAMPLER_DESC2 &sampDesc = desc->GetSampler();
               FillSampler(samp, sampDesc);
               desc++;
             }
@@ -1462,7 +1487,7 @@ void D3D12Replay::FillRootElements(uint32_t eventId, const D3D12RenderState::Roo
           desc += curUsage->descIndex;
           element->samplers.push_back(D3D12Pipe::Sampler());
           D3D12Pipe::Sampler &samp = element->samplers.back();
-          const D3D12_SAMPLER_DESC &sampDesc = desc->GetSampler();
+          const D3D12_SAMPLER_DESC2 &sampDesc = desc->GetSampler();
           FillSampler(samp, sampDesc);
           samp.tableIndex = curUsage->descIndex;
           element->dynamicallyUsedCount++;
@@ -1519,7 +1544,7 @@ void D3D12Replay::FillRootElements(uint32_t eventId, const D3D12RenderState::Roo
   // Each static sampler gets its own RootElement
   for(size_t i = 0; i < sig->sig.StaticSamplers.size(); i++)
   {
-    D3D12_STATIC_SAMPLER_DESC &sampDesc = sig->sig.StaticSamplers[i];
+    D3D12_STATIC_SAMPLER_DESC1 &sampDesc = sig->sig.StaticSamplers[i];
 
     rootElements.resize_for_index(ridx);
     D3D12Pipe::RootSignatureRange &element = rootElements[ridx++];
@@ -1540,31 +1565,51 @@ void D3D12Replay::FillRootElements(uint32_t eventId, const D3D12RenderState::Roo
     samp.addressV = MakeAddressMode(sampDesc.AddressV);
     samp.addressW = MakeAddressMode(sampDesc.AddressW);
 
+    samp.borderColorType = CompType::Float;
+
     if(sampDesc.BorderColor == D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK)
     {
-      samp.borderColor[0] = 0.0f;
-      samp.borderColor[1] = 0.0f;
-      samp.borderColor[2] = 0.0f;
-      samp.borderColor[3] = 0.0f;
+      samp.borderColorValue.floatValue[0] = 0.0f;
+      samp.borderColorValue.floatValue[1] = 0.0f;
+      samp.borderColorValue.floatValue[2] = 0.0f;
+      samp.borderColorValue.floatValue[3] = 0.0f;
     }
     else if(sampDesc.BorderColor == D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK)
     {
-      samp.borderColor[0] = 0.0f;
-      samp.borderColor[1] = 0.0f;
-      samp.borderColor[2] = 0.0f;
-      samp.borderColor[3] = 1.0f;
+      samp.borderColorValue.floatValue[0] = 0.0f;
+      samp.borderColorValue.floatValue[1] = 0.0f;
+      samp.borderColorValue.floatValue[2] = 0.0f;
+      samp.borderColorValue.floatValue[3] = 1.0f;
     }
     else if(sampDesc.BorderColor == D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE)
     {
-      samp.borderColor[0] = 1.0f;
-      samp.borderColor[1] = 1.0f;
-      samp.borderColor[2] = 1.0f;
-      samp.borderColor[3] = 1.0f;
+      samp.borderColorValue.floatValue[0] = 1.0f;
+      samp.borderColorValue.floatValue[1] = 1.0f;
+      samp.borderColorValue.floatValue[2] = 1.0f;
+      samp.borderColorValue.floatValue[3] = 1.0f;
+    }
+    else if(sampDesc.BorderColor == D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK_UINT)
+    {
+      samp.borderColorValue.uintValue[0] = 0;
+      samp.borderColorValue.uintValue[1] = 0;
+      samp.borderColorValue.uintValue[2] = 0;
+      samp.borderColorValue.uintValue[3] = 1;
+      samp.borderColorType = CompType::UInt;
+    }
+    else if(sampDesc.BorderColor == D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE_UINT)
+    {
+      samp.borderColorValue.uintValue[0] = 1;
+      samp.borderColorValue.uintValue[1] = 1;
+      samp.borderColorValue.uintValue[2] = 1;
+      samp.borderColorValue.uintValue[3] = 1;
+      samp.borderColorType = CompType::UInt;
     }
     else
     {
       RDCERR("Unexpected static border colour: %u", sampDesc.BorderColor);
     }
+
+    samp.unnormalized = (sampDesc.Flags & D3D12_SAMPLER_FLAG_NON_NORMALIZED_COORDINATES) != 0;
 
     samp.compareFunction = MakeCompareFunc(sampDesc.ComparisonFunc);
     samp.filter = MakeFilter(sampDesc.Filter);
@@ -1755,9 +1800,24 @@ void D3D12Replay::SavePipelineState(uint32_t eventId)
 
     {
       D3D12Pipe::RasterizerState &dst = state.rasterizer.state;
-      D3D12_RASTERIZER_DESC &src = pipe->graphics->RasterizerState;
+      D3D12_RASTERIZER_DESC2 &src = pipe->graphics->RasterizerState;
 
-      dst.antialiasedLines = src.AntialiasedLineEnable == TRUE;
+      switch(src.LineRasterizationMode)
+      {
+        case D3D12_LINE_RASTERIZATION_MODE_ALIASED:
+          dst.lineRasterMode = LineRaster::Bresenham;
+          break;
+        case D3D12_LINE_RASTERIZATION_MODE_ALPHA_ANTIALIASED:
+          dst.lineRasterMode = LineRaster::RectangularSmooth;
+          break;
+        case D3D12_LINE_RASTERIZATION_MODE_QUADRILATERAL_WIDE:
+          dst.lineRasterMode = LineRaster::RectangularD3D;
+          break;
+        case D3D12_LINE_RASTERIZATION_MODE_QUADRILATERAL_NARROW:
+          dst.lineRasterMode = LineRaster::Rectangular;
+          break;
+        default: dst.lineRasterMode = LineRaster::Default; break;
+      }
 
       dst.cullMode = CullMode::NoCull;
       if(src.CullMode == D3D12_CULL_MODE_FRONT)
@@ -1773,7 +1833,6 @@ void D3D12Replay::SavePipelineState(uint32_t eventId)
       dst.depthBiasClamp = src.DepthBiasClamp;
       dst.depthClip = src.DepthClipEnable == TRUE;
       dst.frontCCW = src.FrontCounterClockwise == TRUE;
-      dst.multisampleEnable = src.MultisampleEnable == TRUE;
       dst.slopeScaledDepthBias = src.SlopeScaledDepthBias;
       dst.forcedSampleCount = src.ForcedSampleCount;
 
@@ -1895,7 +1954,7 @@ void D3D12Replay::SavePipelineState(uint32_t eventId)
     }
 
     {
-      D3D12_DEPTH_STENCIL_DESC1 &src = pipe->graphics->DepthStencilState;
+      D3D12_DEPTH_STENCIL_DESC2 &src = pipe->graphics->DepthStencilState;
 
       state.outputMerger.depthStencilState.depthEnable = src.DepthEnable == TRUE;
       state.outputMerger.depthStencilState.depthFunction = MakeCompareFunc(src.DepthFunc);
@@ -1915,6 +1974,9 @@ void D3D12Replay::SavePipelineState(uint32_t eventId)
           MakeStencilOp(src.FrontFace.StencilPassOp);
       state.outputMerger.depthStencilState.frontFace.failOperation =
           MakeStencilOp(src.FrontFace.StencilFailOp);
+      state.outputMerger.depthStencilState.frontFace.reference = rs.stencilRefFront;
+      state.outputMerger.depthStencilState.frontFace.compareMask = src.FrontFace.StencilReadMask;
+      state.outputMerger.depthStencilState.frontFace.writeMask = src.FrontFace.StencilWriteMask;
 
       state.outputMerger.depthStencilState.backFace.function =
           MakeCompareFunc(src.BackFace.StencilFunc);
@@ -1924,15 +1986,9 @@ void D3D12Replay::SavePipelineState(uint32_t eventId)
           MakeStencilOp(src.BackFace.StencilPassOp);
       state.outputMerger.depthStencilState.backFace.failOperation =
           MakeStencilOp(src.BackFace.StencilFailOp);
-
-      // due to shared structs, this is slightly duplicated - D3D doesn't have separate states for
-      // front/back.
-      state.outputMerger.depthStencilState.frontFace.reference = rs.stencilRef;
-      state.outputMerger.depthStencilState.frontFace.compareMask = src.StencilReadMask;
-      state.outputMerger.depthStencilState.frontFace.writeMask = src.StencilWriteMask;
-      state.outputMerger.depthStencilState.backFace.reference = rs.stencilRef;
-      state.outputMerger.depthStencilState.backFace.compareMask = src.StencilReadMask;
-      state.outputMerger.depthStencilState.backFace.writeMask = src.StencilWriteMask;
+      state.outputMerger.depthStencilState.backFace.reference = rs.stencilRefBack;
+      state.outputMerger.depthStencilState.backFace.compareMask = src.BackFace.StencilReadMask;
+      state.outputMerger.depthStencilState.backFace.writeMask = src.BackFace.StencilWriteMask;
     }
   }
 
@@ -2082,7 +2138,7 @@ uint32_t D3D12Replay::PickVertex(uint32_t eventId, int32_t width, int32_t height
 
   cbuf.PickCoords = Vec2f((float)x, (float)y);
   cbuf.PickViewport = Vec2f((float)width, (float)height);
-  cbuf.PickIdx = cfg.position.indexByteStride ? 1 : 0;
+  cbuf.PickIdx = cfg.position.indexByteStride && cfg.position.indexResourceId != ResourceId() ? 1 : 0;
   cbuf.PickNumVerts = cfg.position.numIndices;
   cbuf.PickUnproject = cfg.position.unproject ? 1 : 0;
   cbuf.PickFlipY = cfg.position.flipY;
@@ -2433,6 +2489,13 @@ uint32_t D3D12Replay::PickVertex(uint32_t eventId, int32_t width, int32_t height
   }
   else
   {
+    if(cfg.position.indexByteStride)
+    {
+      maxIndex = 0;
+      if(cfg.position.baseVertex > 0)
+        minIndex = maxIndex = (uint32_t)cfg.position.baseVertex;
+    }
+
     sdesc.Buffer.NumElements = 4;
     m_pDevice->CreateShaderResourceView(NULL, &sdesc, GetDebugManager()->GetCPUHandle(PICK_IB_SRV));
   }
@@ -2645,7 +2708,13 @@ void D3D12Replay::PickPixel(ResourceId texture, uint32_t x, uint32_t y, const Su
     texDisplay.typeCast = typeCast;
     texDisplay.rawOutput = true;
 
-    ID3D12Resource *resource = m_pDevice->GetResourceList()[texture];
+    ID3D12Resource *resource = NULL;
+
+    {
+      auto it = m_pDevice->GetResourceList().find(texture);
+      if(it != m_pDevice->GetResourceList().end())
+        resource = it->second;
+    }
 
     if(resource)
     {
@@ -2733,7 +2802,13 @@ void D3D12Replay::PickPixel(ResourceId texture, uint32_t x, uint32_t y, const Su
 bool D3D12Replay::GetMinMax(ResourceId texid, const Subresource &sub, CompType typeCast,
                             float *minval, float *maxval)
 {
-  ID3D12Resource *resource = m_pDevice->GetResourceList()[texid];
+  ID3D12Resource *resource = NULL;
+
+  {
+    auto it = m_pDevice->GetResourceList().find(texid);
+    if(it != m_pDevice->GetResourceList().end())
+      resource = it->second;
+  }
 
   if(resource == NULL)
     return false;
@@ -2787,17 +2862,16 @@ bool D3D12Replay::GetMinMax(ResourceId texid, const Subresource &sub, CompType t
   int blocksY = (int)ceil(cdata.HistogramTextureResolution.y /
                           float(HGRAM_PIXELS_PER_TILE * HGRAM_TILES_PER_BLOCK));
 
-  rdcarray<D3D12_RESOURCE_BARRIER> barriers;
+  BarrierSet barriers;
   int resType = 0;
   GetDebugManager()->PrepareTextureSampling(resource, typeCast, resType, barriers);
 
   {
-    ID3D12GraphicsCommandList *list = m_pDevice->GetNewList();
+    ID3D12GraphicsCommandListX *list = m_pDevice->GetNewList();
     if(!list)
       return false;
 
-    if(!barriers.empty())
-      list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
+    barriers.Apply(list);
 
     list->SetPipelineState(m_Histogram.TileMinMaxPipe[resType][intIdx]);
 
@@ -2865,12 +2939,7 @@ bool D3D12Replay::GetMinMax(ResourceId texid, const Subresource &sub, CompType t
 
     list->ResourceBarrier(1, &tileBarriers[1]);
 
-    // transition image back to where it was
-    for(size_t i = 0; i < barriers.size(); i++)
-      std::swap(barriers[i].Transition.StateBefore, barriers[i].Transition.StateAfter);
-
-    if(!barriers.empty())
-      list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
+    barriers.Unapply(list);
 
     list->Close();
 
@@ -2918,7 +2987,13 @@ bool D3D12Replay::GetHistogram(ResourceId texid, const Subresource &sub, CompTyp
   if(minval >= maxval)
     return false;
 
-  ID3D12Resource *resource = m_pDevice->GetResourceList()[texid];
+  ID3D12Resource *resource = NULL;
+
+  {
+    auto it = m_pDevice->GetResourceList().find(texid);
+    if(it != m_pDevice->GetResourceList().end())
+      resource = it->second;
+  }
 
   if(resource == NULL)
     return false;
@@ -2986,17 +3061,16 @@ bool D3D12Replay::GetHistogram(ResourceId texid, const Subresource &sub, CompTyp
   int tilesY = (int)ceil(cdata.HistogramTextureResolution.y /
                          float(HGRAM_PIXELS_PER_TILE * HGRAM_TILES_PER_BLOCK));
 
-  rdcarray<D3D12_RESOURCE_BARRIER> barriers;
+  BarrierSet barriers;
   int resType = 0;
   GetDebugManager()->PrepareTextureSampling(resource, typeCast, resType, barriers);
 
   {
-    ID3D12GraphicsCommandList *list = m_pDevice->GetNewList();
+    ID3D12GraphicsCommandListX *list = m_pDevice->GetNewList();
     if(!list)
       return false;
 
-    if(!barriers.empty())
-      list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
+    barriers.Apply(list);
 
     list->SetPipelineState(m_Histogram.HistogramPipe[resType][intIdx]);
 
@@ -3039,12 +3113,7 @@ bool D3D12Replay::GetHistogram(ResourceId texid, const Subresource &sub, CompTyp
 
     list->ResourceBarrier(1, &tileBarriers[1]);
 
-    // transition image back to where it was
-    for(size_t i = 0; i < barriers.size(); i++)
-      std::swap(barriers[i].Transition.StateBefore, barriers[i].Transition.StateAfter);
-
-    if(!barriers.empty())
-      list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
+    barriers.Unapply(list);
 
     list->Close();
 
@@ -3153,7 +3222,7 @@ void D3D12Replay::GetBufferData(ResourceId buff, uint64_t offset, uint64_t lengt
 {
   auto it = m_pDevice->GetResourceList().find(buff);
 
-  if(it == m_pDevice->GetResourceList().end())
+  if(it == m_pDevice->GetResourceList().end() || it->second == NULL)
   {
     RDCERR("Getting buffer data for unknown buffer %s!",
            ToStr(m_pDevice->GetResourceManager()->GetLiveID(buff)).c_str());
@@ -3495,7 +3564,15 @@ void D3D12Replay::GetTextureData(ResourceId tex, const Subresource &sub,
   bool wasms = false;
   bool resolve = params.resolve;
 
-  ID3D12Resource *resource = m_pDevice->GetResourceList()[tex];
+  m_pDevice->GPUSyncAllQueues();
+
+  ID3D12Resource *resource = NULL;
+
+  {
+    auto it = m_pDevice->GetResourceList().find(tex);
+    if(it != m_pDevice->GetResourceList().end())
+      resource = it->second;
+  }
 
   if(resource == NULL)
   {
@@ -3573,7 +3650,7 @@ void D3D12Replay::GetTextureData(ResourceId tex, const Subresource &sub,
   ID3D12Resource *srcTexture = resource;
   ID3D12Resource *tmpTexture = NULL;
 
-  ID3D12GraphicsCommandList *list = NULL;
+  ID3D12GraphicsCommandListX *list = NULL;
 
   if(params.remap != RemapTexture::NoRemap)
   {
@@ -3735,40 +3812,16 @@ void D3D12Replay::GetTextureData(ResourceId tex, const Subresource &sub,
       return;
 
     // put source texture into resolve source state
-    const rdcarray<D3D12_RESOURCE_STATES> &states = m_pDevice->GetSubresourceStates(tex);
+    BarrierSet barriers;
+    barriers.Configure(resource, m_pDevice->GetSubresourceStates(tex),
+                       BarrierSet::ResolveSourceAccess);
 
-    rdcarray<D3D12_RESOURCE_BARRIER> barriers;
-    barriers.reserve(states.size());
-    for(size_t i = 0; i < states.size(); i++)
-    {
-      D3D12_RESOURCE_BARRIER b;
-
-      // skip unneeded barriers
-      if(states[i] & D3D12_RESOURCE_STATE_RESOLVE_SOURCE)
-        continue;
-
-      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-      b.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-      b.Transition.pResource = resource;
-      b.Transition.Subresource = (UINT)i;
-      b.Transition.StateBefore = states[i];
-      b.Transition.StateAfter = D3D12_RESOURCE_STATE_RESOLVE_SOURCE;
-
-      barriers.push_back(b);
-    }
-
-    if(!barriers.empty())
-      list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
+    barriers.Apply(list);
 
     list->ResolveSubresource(resolveTexture, 0, srcTexture,
                              s.slice * resDesc.DepthOrArraySize + s.mip, resDesc.Format);
 
-    // real resource back to normal
-    for(size_t i = 0; i < barriers.size(); i++)
-      std::swap(barriers[i].Transition.StateBefore, barriers[i].Transition.StateAfter);
-
-    if(!barriers.empty())
-      list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
+    barriers.Unapply(list);
 
     D3D12_RESOURCE_BARRIER b = {};
     b.Transition.pResource = resolveTexture;
@@ -3809,30 +3862,10 @@ void D3D12Replay::GetTextureData(ResourceId tex, const Subresource &sub,
       return;
 
     // put source texture into shader read state
-    const rdcarray<D3D12_RESOURCE_STATES> &states = m_pDevice->GetSubresourceStates(tex);
+    BarrierSet barriers;
+    barriers.Configure(resource, m_pDevice->GetSubresourceStates(tex), BarrierSet::SRVAccess);
 
-    rdcarray<D3D12_RESOURCE_BARRIER> barriers;
-    barriers.reserve(states.size());
-    for(size_t i = 0; i < states.size(); i++)
-    {
-      D3D12_RESOURCE_BARRIER b;
-
-      // skip unneeded barriers
-      if(states[i] & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
-        continue;
-
-      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-      b.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-      b.Transition.pResource = resource;
-      b.Transition.Subresource = (UINT)i;
-      b.Transition.StateBefore = states[i];
-      b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-
-      barriers.push_back(b);
-    }
-
-    if(!barriers.empty())
-      list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
+    barriers.Apply(list);
 
     list->Close();
     list = NULL;
@@ -3849,12 +3882,7 @@ void D3D12Replay::GetTextureData(ResourceId tex, const Subresource &sub,
     if(!list)
       return;
 
-    // real resource back to normal
-    for(size_t i = 0; i < barriers.size(); i++)
-      std::swap(barriers[i].Transition.StateBefore, barriers[i].Transition.StateAfter);
-
-    if(!barriers.empty())
-      list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
+    barriers.Unapply(list);
 
     D3D12_RESOURCE_BARRIER b = {};
     b.Transition.pResource = arrayTexture;
@@ -3873,33 +3901,14 @@ void D3D12Replay::GetTextureData(ResourceId tex, const Subresource &sub,
   if(!list)
     return;
 
-  rdcarray<D3D12_RESOURCE_BARRIER> barriers;
+  BarrierSet barriers;
 
   // if we have no tmpImage, we're copying directly from the real image
   if(tmpTexture == NULL)
   {
-    const rdcarray<D3D12_RESOURCE_STATES> &states = m_pDevice->GetSubresourceStates(tex);
-    barriers.reserve(states.size());
-    for(size_t i = 0; i < states.size(); i++)
-    {
-      D3D12_RESOURCE_BARRIER b;
+    barriers.Configure(resource, m_pDevice->GetSubresourceStates(tex), BarrierSet::CopySourceAccess);
 
-      // skip unneeded barriers
-      if(states[i] & D3D12_RESOURCE_STATE_COPY_SOURCE)
-        continue;
-
-      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-      b.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-      b.Transition.pResource = resource;
-      b.Transition.Subresource = (UINT)i;
-      b.Transition.StateBefore = states[i];
-      b.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-
-      barriers.push_back(b);
-    }
-
-    if(!barriers.empty())
-      list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
+    barriers.Apply(list);
   }
 
   D3D12_FEATURE_DATA_FORMAT_INFO formatInfo = {};
@@ -3981,14 +3990,7 @@ void D3D12Replay::GetTextureData(ResourceId tex, const Subresource &sub,
 
   // if we have no tmpImage, we're copying directly from the real image
   if(tmpTexture == NULL)
-  {
-    // real resource back to normal
-    for(size_t i = 0; i < barriers.size(); i++)
-      std::swap(barriers[i].Transition.StateBefore, barriers[i].Transition.StateAfter);
-
-    if(!barriers.empty())
-      list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
-  }
+    barriers.Unapply(list);
 
   list->Close();
 
@@ -4147,7 +4149,13 @@ void D3D12Replay::BuildCustomShader(ShaderEncoding sourceEncoding, const bytebuf
 
 ResourceId D3D12Replay::ApplyCustomShader(TextureDisplay &display)
 {
-  ID3D12Resource *resource = m_pDevice->GetResourceList()[display.resourceId];
+  ID3D12Resource *resource = NULL;
+
+  {
+    auto it = m_pDevice->GetResourceList().find(display.resourceId);
+    if(it != m_pDevice->GetResourceList().end())
+      resource = it->second;
+  }
 
   if(resource == NULL)
     return ResourceId();

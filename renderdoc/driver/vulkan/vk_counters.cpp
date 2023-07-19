@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include "core/settings.h"
 #include "vk_core.h"
 #include "vk_replay.h"
 #include "vk_resources.h"
@@ -35,6 +36,8 @@
 #include "strings/string_utils.h"
 
 #include "driver/ihv/nv/nv_vk_counters.h"
+
+RDOC_EXTERN_CONFIG(bool, Vulkan_Debug_SingleSubmitFlushing);
 
 static uint32_t FromKHRCounter(GPUCounter counterID)
 {
@@ -453,6 +456,8 @@ void VulkanReplay::FillTimersAMD(uint32_t *eventStartID, uint32_t *sampleIndex,
 {
   uint32_t maxEID = m_pDriver->GetMaxEID();
 
+  RDCASSERT(m_pAMDActionCallback == NULL);
+
   m_pAMDActionCallback = new VulkanAMDActionCallback(m_pDriver, this, *sampleIndex, *eventIDs);
 
   // replay the events to perform all the queries
@@ -499,7 +504,12 @@ rdcarray<CounterResult> VulkanReplay::FetchCountersAMD(const rdcarray<GPUCounter
 
     eventIDs.clear();
 
+    // delete any callback from a previous pass, we only use it for EID aliasing
+    SAFE_DELETE(m_pAMDActionCallback);
+
     FillTimersAMD(&eventStartID, &sampleIndex, &eventIDs);
+
+    // leave this one alive, it will be deleted below
 
     m_pAMDCounters->EndPass();
   }
@@ -994,9 +1004,8 @@ rdcarray<CounterResult> VulkanReplay::FetchCounters(const rdcarray<GPUCounter> &
   vkr = ObjDisp(dev)->EndCommandBuffer(Unwrap(cmd));
   CheckVkResult(vkr);
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-  m_pDriver->SubmitCmds();
-#endif
+  if(Vulkan_Debug_SingleSubmitFlushing())
+    m_pDriver->SubmitCmds();
 
   VulkanGPUTimerCallback cb(m_pDriver, this, timeStampPool, occlusionPool, pipeStatsPool,
                             compPipeStatsPool);

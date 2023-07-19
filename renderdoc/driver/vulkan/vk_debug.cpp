@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -41,6 +41,8 @@
 
 #define VULKAN 1
 #include "data/glsl/glsl_ubos_cpp.h"
+
+RDOC_EXTERN_CONFIG(bool, Vulkan_Debug_SingleSubmitFlushing);
 
 RDOC_CONFIG(bool, Vulkan_HardwareCounters, true,
             "Enable support for IHV-specific hardware counters on Vulkan.");
@@ -374,25 +376,6 @@ VulkanDebugManager::VulkanDebugManager(WrappedVulkan *driver)
 
   //////////////////////////////////////////////////////////////////
   // Color MS <-> Buffer copy (via compute)
-  VkDescriptorPoolSize bufferPoolTypes[] = {
-      {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 2},
-      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
-      {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1},
-  };
-
-  VkDescriptorPoolCreateInfo bufferPoolInfo = {
-      VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-      NULL,
-      0,
-      1,
-      ARRAY_COUNT(bufferPoolTypes),
-      &bufferPoolTypes[0],
-  };
-
-  vkr = m_pDriver->vkCreateDescriptorPool(dev, &bufferPoolInfo, NULL, &m_BufferMSDescriptorPool);
-  CheckVkResult(vkr);
-
-  rm->SetInternalResource(GetResID(m_BufferMSDescriptorPool));
 
   CREATE_OBJECT(m_BufferMSDescSetLayout,
                 {
@@ -419,11 +402,40 @@ VulkanDebugManager::VulkanDebugManager(WrappedVulkan *driver)
   rm->SetInternalResource(GetResID(m_DepthMS2BufferPipe));
   rm->SetInternalResource(GetResID(m_Buffer2MSPipe));
 
-  CREATE_OBJECT(m_BufferMSDescSet, m_BufferMSDescriptorPool, m_BufferMSDescSetLayout);
-  rm->SetInternalResource(GetResID(m_BufferMSDescSet));
-
   //////////////////////////////////////////////////////////////////
   // Depth MS to Buffer copy (via compute)
+
+  // need a dummy float formatted texture but that's easy as we can pick something guaranteed by the
+  // spec
+  {
+    VkImageCreateInfo imInfo = {
+        VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        NULL,
+        0,
+        VK_IMAGE_TYPE_2D,
+        // format is required to be supported for sampling
+        VK_FORMAT_R8G8B8A8_UNORM,
+        {1, 1, 1},
+        1,
+        1,
+        // sampledImageColorSampleCounts must include VK_SAMPLE_COUNT_4_BIT for 2D non-integer
+        // optimal tiled textures
+        VK_SAMPLE_COUNT_4_BIT,
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_SAMPLED_BIT,
+        VK_SHARING_MODE_EXCLUSIVE,
+        0,
+        NULL,
+        VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+
+    vkr = driver->vkCreateImage(driver->GetDev(), &imInfo, NULL, &m_DummyDepthImage);
+    CheckVkResult(vkr);
+
+    NameVulkanObject(m_DummyDepthImage, "m_DummyDepthImage");
+
+    rm->SetInternalResource(GetResID(m_DummyDepthImage));
+  }
 
   // need a dummy UINT texture to fill the binding when we don't have a stencil aspect to copy.
   // unfortunately there's no single guaranteed UINT format that can be sampled as MSAA, so we try a
@@ -502,24 +514,45 @@ VulkanDebugManager::VulkanDebugManager(WrappedVulkan *driver)
 
     rm->SetInternalResource(GetResID(m_DummyStencilImage));
 
+    VkMemoryRequirements depthmrq = {};
+    driver->vkGetImageMemoryRequirements(driver->GetDev(), m_DummyDepthImage, &depthmrq);
+
     VkMemoryRequirements mrq = {};
     driver->vkGetImageMemoryRequirements(driver->GetDev(), m_DummyStencilImage, &mrq);
 
+    // assume we can combine these images into one allocation
+    RDCASSERT((mrq.memoryTypeBits & depthmrq.memoryTypeBits) != 0, mrq.memoryTypeBits,
+              depthmrq.memoryTypeBits);
+
+    // only use memory types that support both
+    mrq.memoryTypeBits &= depthmrq.memoryTypeBits;
+    // use worst case alignment
+    mrq.alignment = RDCMAX(mrq.alignment, depthmrq.alignment);
+
+    // align each size individually (to worst case alignment)
+    depthmrq.size = AlignUp(depthmrq.size, mrq.alignment);
+    mrq.size = AlignUp(mrq.size, mrq.alignment);
+
     // allocate memory
     VkMemoryAllocateInfo allocInfo = {
-        VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, mrq.size,
+        VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, depthmrq.size + mrq.size,
         driver->GetGPULocalMemoryIndex(mrq.memoryTypeBits),
     };
 
-    vkr = driver->vkAllocateMemory(driver->GetDev(), &allocInfo, NULL, &m_DummyStencilMemory);
+    vkr = driver->vkAllocateMemory(driver->GetDev(), &allocInfo, NULL, &m_DummyMemory);
     CheckVkResult(vkr);
 
     if(vkr != VK_SUCCESS)
       return;
 
-    rm->SetInternalResource(GetResID(m_DummyStencilMemory));
+    rm->SetInternalResource(GetResID(m_DummyMemory));
 
-    vkr = driver->vkBindImageMemory(driver->GetDev(), m_DummyStencilImage, m_DummyStencilMemory, 0);
+    NameVulkanObject(m_DummyStencilImage, "m_DummyMemory");
+
+    vkr = driver->vkBindImageMemory(driver->GetDev(), m_DummyStencilImage, m_DummyMemory, 0);
+    CheckVkResult(vkr);
+
+    vkr = driver->vkBindImageMemory(driver->GetDev(), m_DummyDepthImage, m_DummyMemory, mrq.size);
     CheckVkResult(vkr);
 
     VkImageViewCreateInfo viewInfo = {
@@ -542,6 +575,16 @@ VulkanDebugManager::VulkanDebugManager(WrappedVulkan *driver)
     NameVulkanObject(m_DummyStencilView, "m_DummyStencilView");
 
     rm->SetInternalResource(GetResID(m_DummyStencilView));
+
+    viewInfo.image = m_DummyDepthImage;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    vkr = driver->vkCreateImageView(driver->GetDev(), &viewInfo, NULL, &m_DummyDepthView);
+    CheckVkResult(vkr);
+
+    NameVulkanObject(m_DummyDepthView, "m_DummyDepthView");
+
+    rm->SetInternalResource(GetResID(m_DummyDepthView));
 
     VkCommandBuffer cmd = driver->GetNextCmd();
 
@@ -570,6 +613,10 @@ VulkanDebugManager::VulkanDebugManager(WrappedVulkan *driver)
 
     DoPipelineBarrier(cmd, 1, &barrier);
 
+    barrier.image = Unwrap(m_DummyDepthImage);
+    barrierAspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    DoPipelineBarrier(cmd, 1, &barrier);
+
     ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
 
     break;
@@ -583,6 +630,7 @@ VulkanDebugManager::VulkanDebugManager(WrappedVulkan *driver)
   VkFormat formats[] = {
       VK_FORMAT_D16_UNORM,         VK_FORMAT_D16_UNORM_S8_UINT, VK_FORMAT_X8_D24_UNORM_PACK32,
       VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT,        VK_FORMAT_D32_SFLOAT_S8_UINT,
+      VK_FORMAT_S8_UINT,
   };
 
   VkSampleCountFlagBits sampleCounts[] = {
@@ -739,11 +787,14 @@ VulkanDebugManager::~VulkanDebugManager()
     for(uint32_t i = 0; i < VKMeshDisplayPipelines::ePipe_Count; i++)
       m_pDriver->vkDestroyPipeline(dev, it->second.pipes[i], NULL);
 
-  m_pDriver->vkDestroyDescriptorPool(dev, m_BufferMSDescriptorPool, NULL);
+  for(VkDescriptorPool pool : m_BufferMSDescriptorPools)
+    m_pDriver->vkDestroyDescriptorPool(dev, pool, NULL);
 
+  m_pDriver->vkDestroyImageView(dev, m_DummyDepthView, NULL);
+  m_pDriver->vkDestroyImage(dev, m_DummyDepthImage, NULL);
   m_pDriver->vkDestroyImageView(dev, m_DummyStencilView, NULL);
   m_pDriver->vkDestroyImage(dev, m_DummyStencilImage, NULL);
-  m_pDriver->vkFreeMemory(dev, m_DummyStencilMemory, NULL);
+  m_pDriver->vkFreeMemory(dev, m_DummyMemory, NULL);
 
   m_pDriver->vkDestroyDescriptorSetLayout(dev, m_BufferMSDescSetLayout, NULL);
   m_pDriver->vkDestroyPipelineLayout(dev, m_BufferMSPipeLayout, NULL);
@@ -920,9 +971,8 @@ void VulkanDebugManager::CreateCustomShaderTex(uint32_t width, uint32_t height, 
   vkr = ObjDisp(dev)->EndCommandBuffer(Unwrap(cmd));
   CheckVkResult(vkr);
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-  m_pDriver->SubmitCmds();
-#endif
+  if(Vulkan_Debug_SingleSubmitFlushing())
+    m_pDriver->SubmitCmds();
 
   CREATE_OBJECT(m_Custom.TexRP, imInfo.format, imInfo.samples);
 
@@ -1513,9 +1563,8 @@ uint32_t VulkanReplay::PickVertex(uint32_t eventId, int32_t width, int32_t heigh
   VkResult vkr = vt->EndCommandBuffer(Unwrap(cmd));
   CheckVkResult(vkr);
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-  m_pDriver->SubmitCmds();
-#endif
+  if(Vulkan_Debug_SingleSubmitFlushing())
+    m_pDriver->SubmitCmds();
 
   m_pDriver->SubmitCmds();
   m_pDriver->FlushQ();
@@ -1667,6 +1716,68 @@ const WrappedVulkan::DescriptorSetInfo &VulkanDebugManager::GetDescSetInfo(Resou
   return it->second;
 }
 
+VkDescriptorSet VulkanDebugManager::GetBufferMSDescSet()
+{
+  if(m_FreeBufferMSDescriptorSets.empty())
+  {
+    WrappedVulkan *driver = m_pDriver;
+    VulkanResourceManager *rm = driver->GetResourceManager();
+    VkResult vkr = VK_SUCCESS;
+    VkDevice dev = m_pDriver->GetDev();
+
+    VkDescriptorPoolSize bufferPoolTypes[] = {
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 2 * BufferMSDescriptorPoolSize},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 * BufferMSDescriptorPoolSize},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 * BufferMSDescriptorPoolSize},
+    };
+
+    VkDescriptorPoolCreateInfo bufferPoolInfo = {
+        VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        NULL,
+        0,
+        BufferMSDescriptorPoolSize,
+        ARRAY_COUNT(bufferPoolTypes),
+        &bufferPoolTypes[0],
+    };
+
+    VkDescriptorPool pool;
+    vkr = m_pDriver->vkCreateDescriptorPool(dev, &bufferPoolInfo, NULL, &pool);
+    CheckVkResult(vkr);
+
+    rm->SetInternalResource(GetResID(pool));
+
+    m_BufferMSDescriptorPools.push_back(pool);
+
+    rdcarray<VkDescriptorSetLayout> setLayouts;
+    setLayouts.fill(BufferMSDescriptorPoolSize, m_BufferMSDescSetLayout);
+
+    VkDescriptorSetAllocateInfo descSetAllocInfo = {
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        NULL,
+        pool,
+        (uint32_t)setLayouts.size(),
+        setLayouts.data(),
+    };
+
+    m_FreeBufferMSDescriptorSets.resize(BufferMSDescriptorPoolSize);
+    m_pDriver->vkAllocateDescriptorSets(dev, &descSetAllocInfo, m_FreeBufferMSDescriptorSets.data());
+
+    for(VkDescriptorSet set : m_FreeBufferMSDescriptorSets)
+      rm->SetInternalResource(GetResID(set));
+  }
+
+  VkDescriptorSet ret = m_FreeBufferMSDescriptorSets.back();
+  m_FreeBufferMSDescriptorSets.pop_back();
+  m_UsedBufferMSDescriptorSets.push_back(ret);
+  return ret;
+}
+
+void VulkanDebugManager::ResetBufferMSDescriptorPools()
+{
+  m_FreeBufferMSDescriptorSets.append(m_UsedBufferMSDescriptorSets);
+  m_UsedBufferMSDescriptorSets.clear();
+}
+
 void VulkanDebugManager::GetBufferData(ResourceId buff, uint64_t offset, uint64_t len, bytebuf &ret)
 {
   VkDevice dev = m_pDriver->GetDev();
@@ -1768,9 +1879,8 @@ void VulkanDebugManager::GetBufferData(ResourceId buff, uint64_t offset, uint64_
   vkr = vt->EndCommandBuffer(Unwrap(cmd));
   CheckVkResult(vkr);
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-  m_pDriver->SubmitCmds();
-#endif
+  if(Vulkan_Debug_SingleSubmitFlushing())
+    m_pDriver->SubmitCmds();
 
   while(sizeRemaining > 0)
   {
@@ -1847,7 +1957,7 @@ void VulkanDebugManager::FillWithDiscardPattern(VkCommandBuffer cmd, DiscardType
   VkMarkerRegion marker(
       cmd, StringFormat::Fmt("FillWithDiscardPattern %s", ToStr(GetResID(image)).c_str()));
 
-  VkImageAspectFlags imAspects = FormatImageAspects(imInfo.format);
+  const VkImageAspectFlags imAspects = FormatImageAspects(imInfo.format);
 
   VkImageSubresourceRange barrierDiscardRange = discardRange;
   barrierDiscardRange.aspectMask = imAspects;
@@ -2049,7 +2159,8 @@ void VulkanDebugManager::FillWithDiscardPattern(VkCommandBuffer cmd, DiscardType
                                    &pass);
 
     uint32_t offset = 0;
-    if(imAspects != discardRange.aspectMask)
+    if(imAspects != discardRange.aspectMask &&
+       imAspects == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))
     {
       // if we're only discarding one of depth or stencil in a depth/stencil image, pick a
       // framebuffer that only targets that aspect.

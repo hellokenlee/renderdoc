@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -425,9 +425,17 @@ void GLReplay::InitDebugData()
           "#extension GL_ARB_shader_bit_encoding : require\n";
   }
 
-  vs = GenerateGLSLShader(
-      GetEmbeddedResource(glsl_blit_vert), shaderType, glslBaseVer,
-      "#extension GL_ARB_separate_shader_objects : require\n#define FORCE_IO_LOCATION 1");
+  rdcstr vsDefines = "#define FORCE_IO_LOCATION 1";
+
+  if(!IsGLES)
+  {
+    vsDefines =
+        "#extension GL_ARB_separate_shader_objects : require\n"
+        "#extension GL_ARB_explicit_attrib_location : require\n" +
+        vsDefines;
+  }
+
+  vs = GenerateGLSLShader(GetEmbeddedResource(glsl_blit_vert), shaderType, glslBaseVer, vsDefines);
 
   // used to combine with custom shaders.
   // this has to have explicit locations on the output even though we don't normally use that,
@@ -1664,8 +1672,7 @@ void GLReplay::PickPixel(ResourceId texture, uint32_t x, uint32_t y, const Subre
     // at the same time.
     if(texDetails.internalFormat == eGL_DEPTH24_STENCIL8 ||
        texDetails.internalFormat == eGL_DEPTH32F_STENCIL8 ||
-       texDetails.internalFormat == eGL_DEPTH_STENCIL ||
-       texDetails.internalFormat == eGL_STENCIL_INDEX8)
+       texDetails.internalFormat == eGL_DEPTH_STENCIL)
     {
       texDisplay.red = texDisplay.blue = texDisplay.alpha = false;
 
@@ -1687,14 +1694,6 @@ void GLReplay::PickPixel(ResourceId texture, uint32_t x, uint32_t y, const Subre
       // not sure whether [0] or [1] will return stencil values, so use
       // max of two because other channel should be 0
       pixel[1] = float(RDCMAX(stencilpixel[0], stencilpixel[1])) / 255.0f;
-
-      // the first depth read will have read stencil instead.
-      // NULL it out so the UI sees only stencil
-      if(texDetails.internalFormat == eGL_STENCIL_INDEX8)
-      {
-        pixel[1] = float(RDCMAX(stencilpixel[0], stencilpixel[1])) / 255.0f;
-        pixel[0] = 0.0f;
-      }
     }
   }
 }

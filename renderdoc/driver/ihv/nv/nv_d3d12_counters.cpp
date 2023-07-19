@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2022 Baldur Karlsson
+ * Copyright (c) 2022-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -339,6 +339,7 @@ rdcarray<CounterResult> NVD3D12Counters::FetchCounters(const rdcarray<GPUCounter
         break;
       case D3D12_COMMAND_LIST_TYPE_BUNDLE:
       case D3D12_COMMAND_LIST_TYPE_COPY:
+      case D3D12_COMMAND_LIST_TYPE_NONE:
       case D3D12_COMMAND_LIST_TYPE_VIDEO_DECODE:
       case D3D12_COMMAND_LIST_TYPE_VIDEO_PROCESS:
       case D3D12_COMMAND_LIST_TYPE_VIDEO_ENCODE:

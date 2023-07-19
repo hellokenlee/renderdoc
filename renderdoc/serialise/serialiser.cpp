@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -501,6 +501,17 @@ void Serialiser<SerialiserMode::Writing>::EndChunk()
     {
       uint64_t numPadBytes = m_ChunkMetadata.length - writtenLength;
 
+      if(numPadBytes > 1024)
+      {
+        byte padding[1024] = {};
+        memset(padding, 0xbb, 1024);
+        while(numPadBytes > 1024)
+        {
+          m_Write->Write(padding, 1024);
+          numPadBytes -= 1024;
+        }
+      }
+
       // need to write some padding bytes so that the length is accurate
       for(uint64_t i = 0; i < numPadBytes; i++)
       {
@@ -512,7 +523,7 @@ void Serialiser<SerialiserMode::Writing>::EndChunk()
       if(m_ChunkMetadata.length - writtenLength > 128)
       {
         RDCDEBUG("Chunk estimated at %llu bytes, actual length %llu. Added %llu bytes padding.",
-                 m_ChunkMetadata.length, writtenLength, numPadBytes);
+                 m_ChunkMetadata.length, writtenLength, m_ChunkMetadata.length - writtenLength);
       }
     }
     else if(writtenLength > m_ChunkMetadata.length)
@@ -1008,7 +1019,7 @@ rdcstr DoStringise(const bool &el)
 }
 
 Chunk *Chunk::Create(Serialiser<SerialiserMode::Writing> &ser, uint16_t chunkType,
-                     ChunkAllocator *allocator)
+                     ChunkAllocator *allocator, bool stealDataFromWriter)
 {
   RDCCOMPILE_ASSERT(sizeof(Chunk) <= 16, "Chunk should be no more than 16 bytes");
 
@@ -1016,24 +1027,32 @@ Chunk *Chunk::Create(Serialiser<SerialiserMode::Writing> &ser, uint16_t chunkTyp
   uint32_t length = (uint32_t)ser.GetWriter()->GetOffset();
 
   byte *data = NULL;
-  if(allocator)
+
+  if(stealDataFromWriter)
   {
-    // try to allocate from the allocator
-    data = allocator->AllocAlignedBuffer(length);
-
-    // if we couldn't satisfy the allocation then pretend we never had an allocator in the first
-    // place. We'll externally allocate the chunk and the data.
-    if(!data)
-      allocator = NULL;
+    data = ser.GetWriter()->StealDataAndRewind();
   }
+  else
+  {
+    if(allocator)
+    {
+      // try to allocate from the allocator
+      data = allocator->AllocAlignedBuffer(length);
 
-  // if we don't have an allocator or we gave up on it above, allocate the data externally
-  if(!allocator)
-    data = AllocAlignedBuffer(length);
+      // if we couldn't satisfy the allocation then pretend we never had an allocator in the first
+      // place. We'll externally allocate the chunk and the data.
+      if(!data)
+        allocator = NULL;
+    }
 
-  memcpy(data, ser.GetWriter()->GetData(), (size_t)length);
+    // if we don't have an allocator or we gave up on it above, allocate the data externally
+    if(!allocator)
+      data = AllocAlignedBuffer(length);
 
-  ser.GetWriter()->Rewind();
+    memcpy(data, ser.GetWriter()->GetData(), (size_t)length);
+
+    ser.GetWriter()->Rewind();
+  }
 
   Chunk *ret = NULL;
 

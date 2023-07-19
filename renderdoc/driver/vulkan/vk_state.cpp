@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -96,7 +96,7 @@ void setupRenderingInfo(const VulkanRenderState::DynamicRendering &dynamicRender
 
   structs->fragmentDensity = {
       VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_DENSITY_MAP_ATTACHMENT_INFO_EXT, NULL,
-      dynamicRendering.fragmentDensityView, dynamicRendering.fragmentDensityLayout,
+      Unwrap(dynamicRendering.fragmentDensityView), dynamicRendering.fragmentDensityLayout,
   };
 
   if(dynamicRendering.fragmentDensityView != VK_NULL_HANDLE)
@@ -108,7 +108,7 @@ void setupRenderingInfo(const VulkanRenderState::DynamicRendering &dynamicRender
   structs->shadingRate = {
       VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR,
       NULL,
-      dynamicRendering.shadingRateView,
+      Unwrap(dynamicRendering.shadingRateView),
       dynamicRendering.shadingRateLayout,
       dynamicRendering.shadingRateTexelSize,
   };
@@ -473,6 +473,12 @@ void VulkanRenderState::BindPipeline(WrappedVulkan *vk, VkCommandBuffer cmd,
       if(dynamicStates[VkDynamicShadingRateKHR])
         ObjDisp(cmd)->CmdSetFragmentShadingRateKHR(Unwrap(cmd), &pipelineShadingRate,
                                                    shadingRateCombiners);
+    }
+
+    if(vk->DynamicAttachmentLoop())
+    {
+      if(dynamicStates[VkDynamicAttachmentFeedbackLoopEnableEXT])
+        ObjDisp(cmd)->CmdSetAttachmentFeedbackLoopEnableEXT(Unwrap(cmd), feedbackAspects);
     }
 
     if(graphics.pipeline != ResourceId())

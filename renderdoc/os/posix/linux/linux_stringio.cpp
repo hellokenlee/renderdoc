@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -596,22 +596,28 @@ rdcstr GetTempRootPath()
 rdcstr GetAppFolderFilename(const rdcstr &filename)
 {
   passwd *pw = getpwuid(getuid());
-  const char *homedir = pw ? pw->pw_dir : NULL;
+  rdcstr homedir = pw ? pw->pw_dir : "";
 
-  if(!homedir)
-    homedir = getenv("HOME");
+  if(homedir.empty())
+    homedir = Process::GetEnvVariable("HOME");
 
-  if(!homedir)
+  if(homedir.empty())
   {
     RDCERR("Can't get HOME directory, defaulting to '/' instead");
     homedir = "";
   }
 
-  rdcstr ret = rdcstr(homedir) + "/.renderdoc/";
+  rdcstr ret = homedir + "/.renderdoc/";
 
   mkdir(ret.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 
   return ret + filename;
+}
+
+rdcstr DefaultFindFileInPath(const rdcstr &fileName);
+rdcstr FindFileInPath(const rdcstr &fileName)
+{
+  return DefaultFindFileInPath(fileName);
 }
 
 void GetExecutableFilename(rdcstr &selfName)

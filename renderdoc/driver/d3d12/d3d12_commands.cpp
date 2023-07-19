@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -88,6 +88,30 @@ ID3D12GraphicsCommandList *Unwrap(ID3D12GraphicsCommandList6 *obj)
   return ((WrappedID3D12GraphicsCommandList *)obj)->GetReal();
 }
 
+ID3D12GraphicsCommandList *Unwrap(ID3D12GraphicsCommandList7 *obj)
+{
+  if(obj == NULL)
+    return NULL;
+
+  return ((WrappedID3D12GraphicsCommandList *)obj)->GetReal();
+}
+
+ID3D12GraphicsCommandList *Unwrap(ID3D12GraphicsCommandList8 *obj)
+{
+  if(obj == NULL)
+    return NULL;
+
+  return ((WrappedID3D12GraphicsCommandList *)obj)->GetReal();
+}
+
+ID3D12GraphicsCommandList *Unwrap(ID3D12GraphicsCommandList9 *obj)
+{
+  if(obj == NULL)
+    return NULL;
+
+  return ((WrappedID3D12GraphicsCommandList *)obj)->GetReal();
+}
+
 ID3D12GraphicsCommandList1 *Unwrap1(ID3D12GraphicsCommandList1 *obj)
 {
   if(obj == NULL)
@@ -134,6 +158,30 @@ ID3D12GraphicsCommandList6 *Unwrap6(ID3D12GraphicsCommandList6 *obj)
     return NULL;
 
   return ((WrappedID3D12GraphicsCommandList *)obj)->GetReal6();
+}
+
+ID3D12GraphicsCommandList7 *Unwrap7(ID3D12GraphicsCommandList7 *obj)
+{
+  if(obj == NULL)
+    return NULL;
+
+  return ((WrappedID3D12GraphicsCommandList *)obj)->GetReal7();
+}
+
+ID3D12GraphicsCommandList8 *Unwrap8(ID3D12GraphicsCommandList8 *obj)
+{
+  if(obj == NULL)
+    return NULL;
+
+  return ((WrappedID3D12GraphicsCommandList *)obj)->GetReal8();
+}
+
+ID3D12GraphicsCommandList9 *Unwrap9(ID3D12GraphicsCommandList9 *obj)
+{
+  if(obj == NULL)
+    return NULL;
+
+  return ((WrappedID3D12GraphicsCommandList *)obj)->GetReal9();
 }
 
 template <>
@@ -201,6 +249,33 @@ ResourceId GetResID(ID3D12GraphicsCommandList5 *obj)
 
 template <>
 ResourceId GetResID(ID3D12GraphicsCommandList6 *obj)
+{
+  if(obj == NULL)
+    return ResourceId();
+
+  return ((WrappedID3D12GraphicsCommandList *)obj)->GetResourceID();
+}
+
+template <>
+ResourceId GetResID(ID3D12GraphicsCommandList7 *obj)
+{
+  if(obj == NULL)
+    return ResourceId();
+
+  return ((WrappedID3D12GraphicsCommandList *)obj)->GetResourceID();
+}
+
+template <>
+ResourceId GetResID(ID3D12GraphicsCommandList8 *obj)
+{
+  if(obj == NULL)
+    return ResourceId();
+
+  return ((WrappedID3D12GraphicsCommandList *)obj)->GetResourceID();
+}
+
+template <>
+ResourceId GetResID(ID3D12GraphicsCommandList9 *obj)
 {
   if(obj == NULL)
     return ResourceId();
@@ -288,6 +363,21 @@ WrappedID3D12GraphicsCommandList *GetWrapped(ID3D12GraphicsCommandList5 *obj)
 }
 
 WrappedID3D12GraphicsCommandList *GetWrapped(ID3D12GraphicsCommandList6 *obj)
+{
+  return ((WrappedID3D12GraphicsCommandList *)obj);
+}
+
+WrappedID3D12GraphicsCommandList *GetWrapped(ID3D12GraphicsCommandList7 *obj)
+{
+  return ((WrappedID3D12GraphicsCommandList *)obj);
+}
+
+WrappedID3D12GraphicsCommandList *GetWrapped(ID3D12GraphicsCommandList8 *obj)
+{
+  return ((WrappedID3D12GraphicsCommandList *)obj);
+}
+
+WrappedID3D12GraphicsCommandList *GetWrapped(ID3D12GraphicsCommandList9 *obj)
 {
   return ((WrappedID3D12GraphicsCommandList *)obj);
 }
@@ -388,6 +478,7 @@ WrappedID3D12CommandQueue::WrappedID3D12CommandQueue(ID3D12CommandQueue *real,
   if(m_pReal)
   {
     m_pReal->QueryInterface(__uuidof(ID3D12DebugCommandQueue), (void **)&m_WrappedDebug.m_pReal);
+    m_pReal->QueryInterface(__uuidof(ID3D12DebugCommandQueue1), (void **)&m_WrappedDebug.m_pReal1);
     m_pReal->QueryInterface(__uuidof(ID3D12CommandQueueDownlevel), (void **)&m_pDownlevel);
     m_pReal->QueryInterface(__uuidof(ID3D12CompatibilityQueue), (void **)&m_WrappedCompat.m_pReal);
   }
@@ -449,6 +540,7 @@ WrappedID3D12CommandQueue::~WrappedID3D12CommandQueue()
 
   SAFE_RELEASE(m_WrappedCompat.m_pReal);
   SAFE_RELEASE(m_WrappedDebug.m_pReal);
+  SAFE_RELEASE(m_WrappedDebug.m_pReal1);
   SAFE_RELEASE(m_pReal);
 }
 
@@ -472,6 +564,19 @@ HRESULT STDMETHODCALLTYPE WrappedID3D12CommandQueue::QueryInterface(REFIID riid,
     {
       AddRef();
       *ppvObject = (ID3D12DebugCommandQueue *)&m_WrappedDebug;
+      return S_OK;
+    }
+    else
+    {
+      return E_NOINTERFACE;
+    }
+  }
+  else if(riid == __uuidof(ID3D12DebugCommandQueue1))
+  {
+    if(m_WrappedDebug.m_pReal1)
+    {
+      AddRef();
+      *ppvObject = (ID3D12DebugCommandQueue1 *)&m_WrappedDebug;
       return S_OK;
     }
     else
@@ -581,6 +686,7 @@ bool WrappedID3D12CommandQueue::ProcessChunk(ReadSerialiser &ser, D3D12Chunk chu
     case D3D12Chunk::Device_CreateRenderTargetView:
     case D3D12Chunk::Device_CreateDepthStencilView:
     case D3D12Chunk::Device_CreateSampler:
+    case D3D12Chunk::Device_CreateSampler2:
       ret = m_pDevice->Serialise_DynamicDescriptorWrite(ser, NULL);
       break;
     case D3D12Chunk::Device_CopyDescriptors:
@@ -785,6 +891,17 @@ bool WrappedID3D12CommandQueue::ProcessChunk(ReadSerialiser &ser, D3D12Chunk chu
     case D3D12Chunk::List_RSSetShadingRateImage:
       ret = m_ReplayList->Serialise_RSSetShadingRateImage(ser, NULL);
       break;
+    case D3D12Chunk::List_OMSetFrontAndBackStencilRef:
+      ret = m_ReplayList->Serialise_OMSetFrontAndBackStencilRef(ser, 0, 0);
+      break;
+    case D3D12Chunk::List_RSSetDepthBias:
+      ret = m_ReplayList->Serialise_RSSetDepthBias(ser, 0.0f, 0.0f, 0.0f);
+      break;
+    case D3D12Chunk::List_IASetIndexBufferStripCutValue:
+      ret = m_ReplayList->Serialise_IASetIndexBufferStripCutValue(
+          ser, D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED);
+      break;
+    case D3D12Chunk::List_Barrier: ret = m_ReplayList->Serialise_Barrier(ser, 0, NULL); break;
 
     case D3D12Chunk::PushMarker: ret = m_ReplayList->Serialise_BeginEvent(ser, 0, NULL, 0); break;
     case D3D12Chunk::PopMarker: ret = m_ReplayList->Serialise_EndEvent(ser); break;
@@ -842,6 +959,10 @@ bool WrappedID3D12CommandQueue::ProcessChunk(ReadSerialiser &ser, D3D12Chunk chu
     case D3D12Chunk::Device_CreateCommittedResource2:
     case D3D12Chunk::Device_CreatePlacedResource1:
     case D3D12Chunk::Device_CreateCommandQueue1:
+    case D3D12Chunk::Device_CreateCommittedResource3:
+    case D3D12Chunk::Device_CreatePlacedResource2:
+    case D3D12Chunk::Device_CreateReservedResource1:
+    case D3D12Chunk::Device_CreateReservedResource2:
       RDCERR("Unexpected chunk while processing frame: %s", ToStr(chunk).c_str());
       return false;
 
@@ -1140,12 +1261,17 @@ WrappedID3D12GraphicsCommandList::WrappedID3D12GraphicsCommandList(ID3D12Graphic
     m_pList->QueryInterface(__uuidof(ID3D12DebugCommandList), (void **)&m_WrappedDebug.m_pReal);
     m_pList->QueryInterface(__uuidof(ID3D12DebugCommandList1), (void **)&m_WrappedDebug.m_pReal1);
     m_pList->QueryInterface(__uuidof(ID3D12DebugCommandList2), (void **)&m_WrappedDebug.m_pReal2);
+    m_pList->QueryInterface(__uuidof(ID3D12DebugCommandList3), (void **)&m_WrappedDebug.m_pReal3);
 
     m_pList->QueryInterface(__uuidof(ID3D12GraphicsCommandList1), (void **)&m_pList1);
     m_pList->QueryInterface(__uuidof(ID3D12GraphicsCommandList2), (void **)&m_pList2);
     m_pList->QueryInterface(__uuidof(ID3D12GraphicsCommandList3), (void **)&m_pList3);
     m_pList->QueryInterface(__uuidof(ID3D12GraphicsCommandList4), (void **)&m_pList4);
     m_pList->QueryInterface(__uuidof(ID3D12GraphicsCommandList5), (void **)&m_pList5);
+    m_pList->QueryInterface(__uuidof(ID3D12GraphicsCommandList6), (void **)&m_pList6);
+    m_pList->QueryInterface(__uuidof(ID3D12GraphicsCommandList7), (void **)&m_pList7);
+    m_pList->QueryInterface(__uuidof(ID3D12GraphicsCommandList8), (void **)&m_pList8);
+    m_pList->QueryInterface(__uuidof(ID3D12GraphicsCommandList9), (void **)&m_pList9);
   }
 
   // create a temporary and grab its resource ID
@@ -1222,6 +1348,11 @@ WrappedID3D12GraphicsCommandList::~WrappedID3D12GraphicsCommandList()
   SAFE_RELEASE(m_WrappedDebug.m_pReal);
   SAFE_RELEASE(m_WrappedDebug.m_pReal1);
   SAFE_RELEASE(m_WrappedDebug.m_pReal2);
+  SAFE_RELEASE(m_WrappedDebug.m_pReal3);
+  SAFE_RELEASE(m_pList9);
+  SAFE_RELEASE(m_pList8);
+  SAFE_RELEASE(m_pList7);
+  SAFE_RELEASE(m_pList6);
   SAFE_RELEASE(m_pList5);
   SAFE_RELEASE(m_pList4);
   SAFE_RELEASE(m_pList3);
@@ -1311,6 +1442,19 @@ HRESULT STDMETHODCALLTYPE WrappedID3D12GraphicsCommandList::QueryInterface(REFII
       return E_NOINTERFACE;
     }
   }
+  else if(riid == __uuidof(ID3D12DebugCommandList3))
+  {
+    if(m_WrappedDebug.m_pReal3)
+    {
+      AddRef();
+      *ppvObject = (ID3D12DebugCommandList3 *)&m_WrappedDebug;
+      return S_OK;
+    }
+    else
+    {
+      return E_NOINTERFACE;
+    }
+  }
   else if(riid == __uuidof(ID3D12GraphicsCommandList1))
   {
     if(m_pList1)
@@ -1381,6 +1525,45 @@ HRESULT STDMETHODCALLTYPE WrappedID3D12GraphicsCommandList::QueryInterface(REFII
     if(m_pList6)
     {
       *ppvObject = (ID3D12GraphicsCommandList6 *)this;
+      AddRef();
+      return S_OK;
+    }
+    else
+    {
+      return E_NOINTERFACE;
+    }
+  }
+  else if(riid == __uuidof(ID3D12GraphicsCommandList7))
+  {
+    if(m_pList7)
+    {
+      *ppvObject = (ID3D12GraphicsCommandList7 *)this;
+      AddRef();
+      return S_OK;
+    }
+    else
+    {
+      return E_NOINTERFACE;
+    }
+  }
+  else if(riid == __uuidof(ID3D12GraphicsCommandList8))
+  {
+    if(m_pList8)
+    {
+      *ppvObject = (ID3D12GraphicsCommandList8 *)this;
+      AddRef();
+      return S_OK;
+    }
+    else
+    {
+      return E_NOINTERFACE;
+    }
+  }
+  else if(riid == __uuidof(ID3D12GraphicsCommandList9))
+  {
+    if(m_pList9)
+    {
+      *ppvObject = (ID3D12GraphicsCommandList9 *)this;
       AddRef();
       return S_OK;
     }

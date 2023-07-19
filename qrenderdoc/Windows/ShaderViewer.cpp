@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -705,6 +705,7 @@ void ShaderViewer::debugShader(const ShaderBindpointMapping *bind, const ShaderR
 
     {
       QMenu *backwardsMenu = new QMenu(this);
+      backwardsMenu->setToolTipsVisible(true);
       QAction *act;
 
       act = MakeExecuteAction(tr("&Run backwards"), Icons::control_start_blue(),
@@ -770,6 +771,7 @@ void ShaderViewer::debugShader(const ShaderBindpointMapping *bind, const ShaderR
 
     {
       QMenu *forwardsMenu = new QMenu(this);
+      forwardsMenu->setToolTipsVisible(true);
       QAction *act;
 
       act = MakeExecuteAction(tr("&Run forwards"), Icons::control_end_blue(),

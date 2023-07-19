@@ -1,7 +1,7 @@
 /******************************************************************************
 * The MIT License (MIT)
 *
-* Copyright (c) 2019-2022 Baldur Karlsson
+* Copyright (c) 2019-2023 Baldur Karlsson
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -338,6 +338,16 @@ float4 main(float4 pos : SV_Position) : SV_Target0
   {
     swapBlitVS = CreateVS(Compile(D3DFullscreenQuadVertex, "main", "vs_4_0"));
     swapBlitPS = CreatePS(Compile(blitPixel, "main", "ps_5_0"));
+
+    ID3DBlobPtr vsblob = Compile(D3DDefaultVertex, "main", "vs_4_0");
+    ID3DBlobPtr psblob = Compile(D3DDefaultPixel, "main", "ps_4_0");
+
+    CreateDefaultInputLayout(vsblob);
+
+    DefaultTriVS = CreateVS(vsblob);
+    DefaultTriPS = CreatePS(psblob);
+
+    DefaultTriVB = MakeBuffer().Vertex().Data(DefaultTri);
   }
 }
 
@@ -362,6 +372,11 @@ void D3D11GraphicsTest::Shutdown()
 
   swapBlitVS = NULL;
   swapBlitPS = NULL;
+
+  DefaultTriVS = NULL;
+  DefaultTriPS = NULL;
+
+  DefaultTriVB = NULL;
 }
 
 bool D3D11GraphicsTest::Running()

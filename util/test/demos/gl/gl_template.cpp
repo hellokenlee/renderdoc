@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,37 +22,32 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
-#include "d3d9_common.h"
-#include "d3d9_device.h"
+#include "gl_test.h"
 
-unsigned int RefCounter9::SoftRef(WrappedD3DDevice9 *device)
+RD_TEST(GL_Template, OpenGLGraphicsTest)
 {
-  unsigned int ret = AddRef();
-  if(device)
-    device->SoftRef();
-  else
-    RDCWARN("No device pointer, is a deleted resource being AddRef()d?");
-  return ret;
-}
+  static constexpr const char *Description = "Blank test template to be copied & modified.";
 
-unsigned int RefCounter9::SoftRelease(WrappedD3DDevice9 *device)
-{
-  unsigned int ret = Release();
-  if(device)
-    device->SoftRelease();
-  else
-    RDCWARN("No device pointer, is a deleted resource being Release()d?");
-  return ret;
-}
+  int main()
+  {
+    // initialise, create window, create context, etc
+    if(!Init())
+      return 3;
 
-void RefCounter9::AddDeviceSoftref(WrappedD3DDevice9 *device)
-{
-  if(device)
-    device->SoftRef();
-}
+    while(Running())
+    {
+      glClearBufferfv(GL_COLOR, 0, DefaultClearCol);
 
-void RefCounter9::ReleaseDeviceSoftref(WrappedD3DDevice9 *device)
-{
-  if(device)
-    device->SoftRelease();
-}
+      glBindVertexArray(DefaultTriVAO);
+      glUseProgram(DefaultTriProgram);
+      glViewport(0, 0, GLsizei(screenWidth), GLsizei(screenHeight));
+      glDrawArrays(GL_TRIANGLES, 0, 3);
+
+      Present();
+    }
+
+    return 0;
+  }
+};
+
+REGISTER_TEST();

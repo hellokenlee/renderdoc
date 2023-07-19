@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -2542,7 +2542,7 @@ bool WrappedVulkan::Serialise_vkCmdClearAttachments(SerialiserType &ser,
         {
           if(pAttachments[a].aspectMask & VK_IMAGE_ASPECT_COLOR_BIT)
             action.flags |= ActionFlags::ClearColor;
-          if(pAttachments[a].aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT)
+          if(pAttachments[a].aspectMask & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))
             action.flags |= ActionFlags::ClearDepthStencil;
         }
 
@@ -2575,7 +2575,8 @@ bool WrappedVulkan::Serialise_vkCmdClearAttachments(SerialiserType &ser,
                 }
               }
             }
-            else if(pAttachments[a].aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT)
+            else if(pAttachments[a].aspectMask &
+                    (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))
             {
               if(rp.subpasses[state.subpass].depthstencilAttachment >= 0)
               {

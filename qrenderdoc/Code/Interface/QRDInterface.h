@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -1393,12 +1393,23 @@ struct IReplayManager
 )");
   virtual RemoteHost CurrentRemote() = 0;
 
-  DOCUMENT(R"(Retrieves the capture file handle for the currently open file.
+  DOCUMENT(R"(Retrieves the capture access handle for the currently open file.
 
 :return: The file handle active, or ``None`` if no capture is open.
 :rtype: renderdoc.CaptureAccess
 )");
   virtual ICaptureAccess *GetCaptureAccess() = 0;
+
+  DOCUMENT(R"(Retrieves the capture file handle for the currently open file, if it is available.
+
+If the capture is not open locally this will not be available, and only :meth:`GetCaptureAccess`
+will be usable.
+
+:return: The file handle active, or ``None`` if no capture is open or the capture is only available
+  remotely.
+:rtype: renderdoc.CaptureFile
+)");
+  virtual ICaptureFile *GetCaptureFile() = 0;
 
   DOCUMENT(R"(Launch an application and inject into it to allow capturing.
 
@@ -2741,5 +2752,11 @@ data.
 rdcstr ConfigFilePath(const rdcstr &filename);
 
 // simple helper for the common case of 'we just need to run this on the replay thread'
-#define INVOKE_MEMFN(function) \
-  m_Ctx.Replay().AsyncInvoke([this](IReplayController *r) { function(r); });
+#define INVOKE_MEMFN(function)                                          \
+  {                                                                     \
+    QPointer<std::remove_reference<decltype(*this)>::type> meptr(this); \
+    m_Ctx.Replay().AsyncInvoke([meptr](IReplayController *r) {          \
+      if(meptr)                                                         \
+        meptr->function(r);                                             \
+    });                                                                 \
+  }

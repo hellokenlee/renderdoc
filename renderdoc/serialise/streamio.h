@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -29,6 +29,7 @@
 #include "api/replay/replay_enums.h"
 #include "common/common.h"
 #include "common/formatting.h"
+#include "common/threading.h"
 #include "os/os_specific.h"
 
 enum class Ownership
@@ -180,7 +181,9 @@ public:
         // and larger by just skating over the limit each time, but that's fine because the main
         // case we want to catch is a window that's only a few MB and then suddenly we read 100s of
         // MB.
-        if(numBytes >= 10 * 1024 * 1024 && Available() + 128 < numBytes)
+        // We don't do this on sockets since we want to opportunistically read more into the window
+        // to batch lots of small reads together.
+        if(m_Sock == NULL && numBytes >= 10 * 1024 * 1024 && Available() + 128 < numBytes)
         {
           success = ReadLargeBuffer(data, numBytes);
           alreadyread = true;
@@ -293,6 +296,58 @@ private:
   rdcarray<StreamCloseCallback> m_Callbacks;
 };
 
+class FileWriter
+{
+public:
+  static FileWriter *MakeDefault(FILE *file, Ownership own);
+  static FileWriter *MakeThreaded(FILE *file, Ownership own);
+
+  ~FileWriter();
+
+  RDResult Write(const void *data, uint64_t length);
+  RDResult Flush();
+
+private:
+  FileWriter(FILE *file, Ownership own) : m_File(file), m_Ownership(own) {}
+  RDResult WriteThreaded(const void *data, uint64_t length);
+  RDResult WriteUnthreaded(const void *data, uint64_t length);
+  void ThreadEntry();
+
+  FILE *m_File;
+
+  // do we own the file/compressor? are we responsible for
+  // cleaning it up?
+  Ownership m_Ownership;
+
+  static const uint64_t BlockSize = 4 * 1024 * 1024;
+  static const uint64_t NumBlocks = 8;
+
+  // <base_pointer, byte_offset/size>
+  using Block = rdcpair<byte *, uint64_t>;
+
+  int32_t m_ThreadRunning = 0;
+  int32_t m_ThreadKill = 0;
+  Threading::ThreadHandle m_Thread = 0;
+
+  // only touched by the producer, set of blocks allocated for easy cleanup. These blocks are in at
+  // most one of the arrays below
+  Block m_AllocBlocks[NumBlocks] = {};
+
+  // list of blocks the producer owns. The last in this list is the one we're writing to currently
+  rdcarray<Block> m_ProducerOwned;
+  // list of blocks the consumer owns. This list is being churned through on the work thread
+  rdcarray<Block> m_ConsumerOwned;
+
+  // the lock protects everything below
+  Threading::SpinLock m_Lock;
+  // work to be pushed onto m_ConsumerOwned from the producer
+  rdcarray<Block> m_PendingForConsumer;
+  // blocks that can be pulled into m_ProducerOwned by the producer
+  rdcarray<Block> m_CompletedFromConsumer;
+  // any error that has appeared
+  RDResult m_Error;
+};
+
 class StreamWriter
 {
 public:
@@ -303,8 +358,14 @@ public:
 
   StreamWriter(StreamInvalidType, RDResult res);
   StreamWriter(uint64_t initialBufSize);
-  StreamWriter(FILE *file, Ownership own);
-  StreamWriter(Network::Socket *file, Ownership own);
+  StreamWriter(FileWriter *file, Ownership own);
+  // when given a FILE* make a default filewriter and own it ourselves, but the filewriter uses the
+  // ownership of the FILE that was specified
+  StreamWriter(FILE *file, Ownership own)
+      : StreamWriter(FileWriter::MakeDefault(file, own), Ownership::Stream)
+  {
+  }
+  StreamWriter(Network::Socket *sock, Ownership own);
   StreamWriter(Compressor *compressor, Ownership own);
 
   bool IsErrored() { return m_Error != ResultCode::Succeeded; }
@@ -332,6 +393,17 @@ public:
 
   uint64_t GetOffset() { return m_WriteSize; }
   const byte *GetData() { return m_BufferBase; }
+  byte *StealDataAndRewind()
+  {
+    byte *ret = m_BufferBase;
+
+    const uint64_t bufferSize = m_BufferEnd - m_BufferBase;
+    m_BufferBase = m_BufferHead = AllocAlignedBuffer(bufferSize);
+    m_BufferEnd = m_BufferBase + bufferSize;
+    m_WriteSize = 0;
+
+    return ret;
+  }
   template <uint64_t alignment>
   bool AlignTo()
   {
@@ -383,17 +455,13 @@ public:
     }
     else if(m_File)
     {
-      uint64_t written = (uint64_t)FileIO::fwrite(data, 1, (size_t)numBytes, m_File);
-      if(written != numBytes)
-      {
-        RDResult result;
-        SET_ERROR_RESULT(result, ResultCode::FileIOFailed, "Writing to file failed: %s",
-                         FileIO::ErrorString().c_str());
-        HandleError(result);
-        return false;
-      }
+      RDResult result = m_File->Write(data, numBytes);
 
-      return true;
+      if(result == ResultCode::Succeeded)
+        return true;
+
+      HandleError(result);
+      return false;
     }
     else if(m_Sock)
     {
@@ -470,14 +538,11 @@ public:
     }
     else if(m_File)
     {
-      bool success = FileIO::fflush(m_File);
+      RDResult result = m_File->Flush();
 
-      if(success)
+      if(result == ResultCode::Succeeded)
         return true;
 
-      RDResult result;
-      SET_ERROR_RESULT(result, ResultCode::FileIOFailed, "File flushing failed: %s",
-                       FileIO::ErrorString().c_str());
       HandleError(result);
 
       return false;
@@ -498,14 +563,11 @@ public:
     }
     else if(m_File)
     {
-      bool success = FileIO::fflush(m_File);
+      RDResult result = m_File->Flush();
 
-      if(success)
+      if(result == ResultCode::Succeeded)
         return true;
 
-      RDResult result;
-      SET_ERROR_RESULT(result, ResultCode::FileIOFailed, "File flushing failed: %s",
-                       FileIO::ErrorString().c_str());
       HandleError(result);
 
       return false;
@@ -565,8 +627,8 @@ private:
   // the total size of the file/compressor (ie. how much data flushed through it)
   uint64_t m_WriteSize = 0;
 
-  // file pointer, if we're writing to a file
-  FILE *m_File = NULL;
+  // file writer, if we're writing to a file
+  FileWriter *m_File = NULL;
 
   // the compressor, if writing to it
   Compressor *m_Compressor = NULL;

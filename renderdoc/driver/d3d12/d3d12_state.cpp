@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -80,7 +80,11 @@ void D3D12RenderState::ApplyState(WrappedID3D12Device *dev, ID3D12GraphicsComman
     if(topo != D3D_PRIMITIVE_TOPOLOGY_UNDEFINED)
       cmd->IASetPrimitiveTopology(topo);
 
-    cmd->OMSetStencilRef(stencilRef);
+    if(stencilRefFront != stencilRefBack && GetWrapped(cmd)->GetReal8() &&
+       dev->GetOpts14().IndependentFrontAndBackStencilRefMaskSupported)
+      cmd->OMSetFrontAndBackStencilRef(stencilRefFront, stencilRefBack);
+    else
+      cmd->OMSetStencilRef(stencilRefFront);
     cmd->OMSetBlendFactor(blendFactor);
 
     if(GetWrapped(cmd)->GetReal1())
@@ -111,6 +115,19 @@ void D3D12RenderState::ApplyState(WrappedID3D12Device *dev, ID3D12GraphicsComman
         if(shadingRateImage != ResourceId())
           cmd->RSSetShadingRateImage(
               GetResourceManager()->GetCurrentAs<ID3D12Resource>(shadingRateImage));
+      }
+    }
+
+    if(GetWrapped(cmd)->GetReal9())
+    {
+      if(dev->GetOpts15().DynamicIndexBufferStripCutSupported)
+      {
+        cmd->IASetIndexBufferStripCutValue(cutValue);
+      }
+
+      if(dev->GetOpts16().DynamicDepthBiasSupported)
+      {
+        cmd->RSSetDepthBias(depthBias, depthBiasClamp, slopeScaledDepthBias);
       }
     }
 

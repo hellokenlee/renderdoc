@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,36 +22,46 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
-#include "driver/dx/official/d3d8.h"
-#include "hooks/hooks.h"
-#include "d3d8_device.h"
+#include "vk_test.h"
 
-typedef IDirect3D8 *(WINAPI *PFN_D3D8_CREATE)(UINT);
-
-class D3D8Hook : LibraryHook
+RD_TEST(VK_Template, VulkanGraphicsTest)
 {
-public:
-  void RegisterHooks()
+  static constexpr const char *Description = "Blank test template to be copied & modified.";
+
+  int main()
   {
-    RDCLOG("Registering D3D8 hooks");
+    // initialise, create window, create context, etc
+    if(!Init())
+      return 3;
 
-    LibraryHooks::RegisterLibraryHook("d3d8.dll", NULL);
-    Create8.Register("d3d8.dll", "Direct3DCreate8", Create8_hook);
-  }
+    while(Running())
+    {
+      VkCommandBuffer cmd = GetCommandBuffer();
 
-private:
-  static D3D8Hook d3d8hooks;
+      vkBeginCommandBuffer(cmd, vkh::CommandBufferBeginInfo());
 
-  HookedFunction<PFN_D3D8_CREATE> Create8;
+      VkImage swapimg = StartUsingBackbuffer(cmd);
 
-  static IDirect3D8 *WINAPI Create8_hook(UINT SDKVersion)
-  {
-    RDCLOG("App creating d3d8 %x", SDKVersion);
+      vkh::cmdClearImage(cmd, swapimg, vkh::ClearColorValue(0.2f, 0.2f, 0.2f, 1.0f));
 
-    IDirect3D8 *realD3D = d3d8hooks.Create8()(SDKVersion);
+      vkCmdBeginRenderPass(cmd, mainWindow->beginRP(), VK_SUBPASS_CONTENTS_INLINE);
 
-    return new WrappedD3D8(realD3D);
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, DefaultTriPipe);
+      mainWindow->setViewScissor(cmd);
+      vkh::cmdBindVertexBuffers(cmd, {DefaultTriVB.buffer});
+      vkCmdDraw(cmd, 3, 1, 0, 0);
+
+      vkCmdEndRenderPass(cmd);
+
+      FinishUsingBackbuffer(cmd);
+
+      vkEndCommandBuffer(cmd);
+
+      SubmitAndPresent({cmd});
+    }
+
+    return 0;
   }
 };
 
-D3D8Hook D3D8Hook::d3d8hooks;
+REGISTER_TEST();

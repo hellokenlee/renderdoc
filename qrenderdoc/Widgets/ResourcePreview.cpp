@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -96,6 +96,9 @@ void ResourcePreview::Initialise()
   QObject::connect(ui->slotLabel, &RDLabel::doubleClicked, this, &ResourcePreview::doubleClickEvent);
   QObject::connect(ui->descriptionLabel, &RDLabel::doubleClicked, this,
                    &ResourcePreview::doubleClickEvent);
+
+  if(m_ManualThumbnail)
+    QObject::connect(m_ManualThumbnail, &RDLabel::resized, [this]() { emit resized(this); });
 }
 
 ResourcePreview::~ResourcePreview()

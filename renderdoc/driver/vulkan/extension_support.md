@@ -27,6 +27,7 @@ Maintainers can update this file by updating vk.xml in this folder and running `
 * `VK_EXT_acquire_drm_display`
 * `VK_EXT_acquire_xlib_display`
 * `VK_EXT_astc_decode_mode`
+* `VK_EXT_attachment_feedback_loop_dynamic_state`
 * `VK_EXT_attachment_feedback_loop_layout`
 * `VK_EXT_border_color_swizzle`
 * `VK_EXT_buffer_device_address`
@@ -61,6 +62,7 @@ Maintainers can update this file by updating vk.xml in this folder and running `
 * `VK_EXT_hdr_metadata`
 * `VK_EXT_headless_surface`
 * `VK_EXT_host_query_reset`
+* `VK_EXT_image_2d_view_of_3d`
 * `VK_EXT_image_robustness`
 * `VK_EXT_image_view_min_lod`
 * `VK_EXT_index_type_uint8`
@@ -81,6 +83,7 @@ Maintainers can update this file by updating vk.xml in this folder and running `
 * `VK_EXT_primitive_topology_list_restart`
 * `VK_EXT_primitives_generated_query`
 * `VK_EXT_private_data`
+* `VK_EXT_provoking_vertex`
 * `VK_EXT_queue_family_foreign`
 * `VK_EXT_rgba10x6_formats`
 * `VK_EXT_robustness2`
@@ -224,7 +227,7 @@ KHR extensions will definitely be implemented at some point, though KHR extensio
 
 ## KHR Extensions
 
-* None currently.
+* `VK_KHR_map_memory2`
 
 ## KHR Portability
 
@@ -239,6 +242,7 @@ Ray tracing extensions are now standard and will likely be supported at some poi
 
 * `VK_KHR_acceleration_structure`
 * `VK_KHR_ray_tracing_pipeline`
+* `VK_KHR_ray_tracing_position_fetch`
 * `VK_KHR_ray_tracing_maintenance1`
 * `VK_KHR_ray_query`
 * `VK_KHR_deferred_host_operations`
@@ -250,9 +254,11 @@ Ray tracing extensions are now standard and will likely be supported at some poi
 * `VK_EXT_device_address_binding_report`
 * `VK_EXT_device_fault`
 * `VK_EXT_device_memory_report`
+* `VK_EXT_dynamic_rendering_unused_attachments`
+* `VK_EXT_external_memory_acquire_unmodified`
 * `VK_EXT_external_memory_host`
 * `VK_EXT_extended_dynamic_state3`
-* `VK_EXT_image_2d_view_of_3d`
+* `VK_EXT_image_sliced_view_of_3d`
 * `VK_EXT_image_compression_control`
 * `VK_EXT_image_compression_control_swapchain`
 * `VK_EXT_image_drm_format_modifier`
@@ -262,12 +268,14 @@ Ray tracing extensions are now standard and will likely be supported at some poi
 * `VK_EXT_multi_draw`
 * `VK_EXT_opacity_micromap`
 * `VK_EXT_physical_device_drm`
+* `VK_EXT_pipeline_library_group_handles`
 * `VK_EXT_pipeline_protected_access`
 * `VK_EXT_pipeline_properties`
 * `VK_EXT_pipeline_robustness`
-* `VK_EXT_provoking_vertex`
 * `VK_EXT_rasterization_order_attachment_access`
 * `VK_EXT_shader_module_identifier`
+* `VK_EXT_shader_object`
+* `VK_EXT_shader_tile_image`
 * `VK_EXT_subpass_merge_feedback`
 
 ## Platform/IHV Extensions
@@ -276,6 +284,7 @@ Ray tracing extensions are now standard and will likely be supported at some poi
 
 * `VK_ARM_rasterization_order_attachment_access`
 * `VK_ARM_shader_core_builtins`
+* `VK_ARM_shader_core_properties`
 
 ### AMD
 
@@ -297,6 +306,7 @@ Ray tracing extensions are now standard and will likely be supported at some poi
 
 ### Huawei
 
+* `VK_HUAWEI_cluster_culling_shader`
 * `VK_HUAWEI_subpass_shading`
 * `VK_HUAWEI_invocation_mask`
 
@@ -316,6 +326,7 @@ Ray tracing extensions are now standard and will likely be supported at some poi
 * `VK_NV_device_diagnostic_checkpoints`
 * `VK_NV_device_diagnostics_config`
 * `VK_NV_device_generated_commands`
+* `VK_NV_displacement_micromap`
 * `VK_NV_external_memory_rdma`
 * `VK_NV_fill_rectangle`
 * `VK_NV_fragment_coverage_to_color`
@@ -323,6 +334,7 @@ Ray tracing extensions are now standard and will likely be supported at some poi
 * `VK_NV_framebuffer_mixed_samples`
 * `VK_NV_inherited_viewport_scissor`
 * `VK_NV_linear_color_attachment`
+* `VK_NV_low_latency`
 * `VK_NV_memory_decompression`
 * `VK_NV_mesh_shader`
 * `VK_NV_optical_flow`
@@ -337,6 +349,7 @@ Ray tracing extensions are now standard and will likely be supported at some poi
 
 ### Qualcomm
 
+* `VK_QCOM_multiview_per_view_render_areas`
 * `VK_QCOM_fragment_density_map_offset`
 * `VK_QCOM_image_processing`
 * `VK_QCOM_multiview_per_view_viewports`
@@ -363,6 +376,7 @@ These only make sense to implement if the platform as a whole is supported.
 * `VK_NN_vi_surface`
 * `VK_NV_acquire_winrt_display`
 * `VK_QNX_screen_surface`
+* `VK_QNX_external_memory_screen_buffer`
 
 ## Deliberately unsupported extensions
 

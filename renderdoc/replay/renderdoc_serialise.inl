@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2017-2022 Baldur Karlsson
+ * Copyright (c) 2017-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -102,8 +102,9 @@ void DoSerialise(SerialiserType &ser, CaptureOptions &el)
   SERIALISE_MEMBER(refAllResources);
   SERIALISE_MEMBER(captureAllCmdLists);
   SERIALISE_MEMBER(debugOutputMute);
+  SERIALISE_MEMBER(softMemoryLimit);
 
-  SIZE_CHECK(20);
+  SIZE_CHECK(24);
 }
 
 template <typename SerialiserType>
@@ -494,6 +495,7 @@ void DoSerialise(SerialiserType &ser, APIProperties &el)
 
   SERIALISE_MEMBER(shaderDebugging);
   SERIALISE_MEMBER(pixelHistory);
+  SERIALISE_MEMBER(rgpCapture);
 
   SERIALISE_MEMBER(ShaderLinkage);
   SERIALISE_MEMBER(YUVTextures);
@@ -1435,7 +1437,9 @@ void DoSerialise(SerialiserType &ser, D3D12Pipe::Sampler &el)
   SERIALISE_MEMBER(addressU);
   SERIALISE_MEMBER(addressV);
   SERIALISE_MEMBER(addressW);
-  SERIALISE_MEMBER(borderColor);
+  SERIALISE_MEMBER(borderColorValue);
+  SERIALISE_MEMBER(borderColorType);
+  SERIALISE_MEMBER(unnormalized);
   SERIALISE_MEMBER(compareFunction);
   SERIALISE_MEMBER(filter);
   SERIALISE_MEMBER(maxAnisotropy);
@@ -1443,7 +1447,7 @@ void DoSerialise(SerialiserType &ser, D3D12Pipe::Sampler &el)
   SERIALISE_MEMBER(minLOD);
   SERIALISE_MEMBER(mipLODBias);
 
-  SIZE_CHECK(72);
+  SIZE_CHECK(76);
 }
 
 template <typename SerialiserType>
@@ -1502,8 +1506,7 @@ void DoSerialise(SerialiserType &ser, D3D12Pipe::RasterizerState &el)
   SERIALISE_MEMBER(depthBiasClamp);
   SERIALISE_MEMBER(slopeScaledDepthBias);
   SERIALISE_MEMBER(depthClip);
-  SERIALISE_MEMBER(multisampleEnable);
-  SERIALISE_MEMBER(antialiasedLines);
+  SERIALISE_MEMBER(lineRasterMode);
   SERIALISE_MEMBER(forcedSampleCount);
   SERIALISE_MEMBER(conservativeRasterization);
   SERIALISE_MEMBER(baseShadingRate);
@@ -1948,7 +1951,8 @@ void DoSerialise(SerialiserType &ser, VKPipe::BindingElement &el)
   SERIALISE_MEMBER(compareFunction);
   SERIALISE_MEMBER(minLOD);
   SERIALISE_MEMBER(maxLOD);
-  SERIALISE_MEMBER(borderColor);
+  SERIALISE_MEMBER(borderColorValue);
+  SERIALISE_MEMBER(borderColorType);
   SERIALISE_MEMBER(samplerSwizzle);
   SERIALISE_MEMBER(unnormalized);
   SERIALISE_MEMBER(inlineBlock);
@@ -1962,7 +1966,7 @@ void DoSerialise(SerialiserType &ser, VKPipe::BindingElement &el)
   SERIALISE_MEMBER(chromaFilter);
   SERIALISE_MEMBER(forceExplicitReconstruction);
 
-  SIZE_CHECK(184);
+  SIZE_CHECK(192);
 };
 
 template <typename SerialiserType>
@@ -2152,6 +2156,7 @@ void DoSerialise(SerialiserType &ser, VKPipe::Rasterizer &el)
   SERIALISE_MEMBER(conservativeRasterization);
   SERIALISE_MEMBER(extraPrimitiveOverestimationSize);
 
+  SERIALISE_MEMBER(provokingVertexFirst);
   SERIALISE_MEMBER(depthBiasEnable);
   SERIALISE_MEMBER(depthBias);
   SERIALISE_MEMBER(depthBiasClamp);
@@ -2288,8 +2293,11 @@ void DoSerialise(SerialiserType &ser, VKPipe::CurrentPass &el)
   SERIALISE_MEMBER(renderpass);
   SERIALISE_MEMBER(framebuffer);
   SERIALISE_MEMBER(renderArea);
+  SERIALISE_MEMBER(colorFeedbackAllowed);
+  SERIALISE_MEMBER(depthFeedbackAllowed);
+  SERIALISE_MEMBER(stencilFeedbackAllowed);
 
-  SIZE_CHECK(232);
+  SIZE_CHECK(240);
 }
 
 template <typename SerialiserType>
@@ -2357,7 +2365,7 @@ void DoSerialise(SerialiserType &ser, VKPipe::State &el)
 
   SERIALISE_MEMBER(conditionalRendering);
 
-  SIZE_CHECK(2256);
+  SIZE_CHECK(2264);
 }
 
 #pragma endregion Vulkan pipeline state

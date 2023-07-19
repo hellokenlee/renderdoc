@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2022 Baldur Karlsson
+ * Copyright (c) 2022-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -1124,6 +1124,17 @@ rdcstr DoStringise(const MTL::CullMode &el)
   }
   END_ENUM_STRINGISE();
 };
+
+template <>
+rdcstr DoStringise(const MTL::IndexType &el)
+{
+  BEGIN_ENUM_STRINGISE(MTL::IndexType)
+  {
+    MTL_STRINGISE_ENUM(IndexTypeUInt16);
+    MTL_STRINGISE_ENUM(IndexTypeUInt32);
+  }
+  END_ENUM_STRINGISE()
+}
 
 template <>
 rdcstr DoStringise(const MetalResourceType &el)

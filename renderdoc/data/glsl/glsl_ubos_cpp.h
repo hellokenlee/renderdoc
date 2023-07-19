@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -95,27 +95,27 @@ const char HLSL_CUSTOM_PREFIX[] =
 #define RD_FLOAT_YUV_ARRAY_BINDING t10
 #define RD_FLOAT_YUV_BINDING t10
 
-#define RD_INT_1D_ARRAY_BINDING t11
-#define RD_INT_1D_BINDING t11
+#define RD_UINT_1D_ARRAY_BINDING t11
+#define RD_UINT_1D_BINDING t11
 
-#define RD_INT_2D_ARRAY_BINDING t12
-#define RD_INT_2D_BINDING t12
+#define RD_UINT_2D_ARRAY_BINDING t12
+#define RD_UINT_2D_BINDING t12
 
-#define RD_INT_3D_BINDING t13
+#define RD_UINT_3D_BINDING t13
 
-#define RD_INT_2DMS_ARRAY_BINDING t14
-#define RD_INT_2DMS_BINDING t14
+#define RD_UINT_2DMS_ARRAY_BINDING t14
+#define RD_UINT_2DMS_BINDING t14
 
-#define RD_UINT_1D_ARRAY_BINDING t16
-#define RD_UINT_1D_BINDING t16
+#define RD_INT_1D_ARRAY_BINDING t16
+#define RD_INT_1D_BINDING t16
 
-#define RD_UINT_2D_ARRAY_BINDING t17
-#define RD_UINT_2D_BINDING t17
+#define RD_INT_2D_ARRAY_BINDING t17
+#define RD_INT_2D_BINDING t17
 
-#define RD_UINT_3D_BINDING t18
+#define RD_INT_3D_BINDING t18
 
-#define RD_UINT_2DMS_ARRAY_BINDING t19
-#define RD_UINT_2DMS_BINDING t19
+#define RD_INT_2DMS_ARRAY_BINDING t19
+#define RD_INT_2DMS_BINDING t19
 
 #define RD_POINT_SAMPLER_BINDING s50
 #define RD_LINEAR_SAMPLER_BINDING s51
@@ -243,27 +243,27 @@ const char GLSL_CUSTOM_PREFIX[] =
 #define RD_FLOAT_YUV_BINDING 10
 #define RD_FLOAT_YUV_ARRAY_SIZE 2
 
-#define RD_INT_1D_ARRAY_BINDING 11
-#define RD_INT_1D_BINDING 11
+#define RD_UINT_1D_ARRAY_BINDING 11
+#define RD_UINT_1D_BINDING 11
 
-#define RD_INT_2D_ARRAY_BINDING 12
-#define RD_INT_2D_BINDING 12
+#define RD_UINT_2D_ARRAY_BINDING 12
+#define RD_UINT_2D_BINDING 12
 
-#define RD_INT_3D_BINDING 13
+#define RD_UINT_3D_BINDING 13
 
-#define RD_INT_2DMS_ARRAY_BINDING 14
-#define RD_INT_2DMS_BINDING 14
+#define RD_UINT_2DMS_ARRAY_BINDING 14
+#define RD_UINT_2DMS_BINDING 14
 
-#define RD_UINT_1D_ARRAY_BINDING 16
-#define RD_UINT_1D_BINDING 16
+#define RD_INT_1D_ARRAY_BINDING 16
+#define RD_INT_1D_BINDING 16
 
-#define RD_UINT_2D_ARRAY_BINDING 17
-#define RD_UINT_2D_BINDING 17
+#define RD_INT_2D_ARRAY_BINDING 17
+#define RD_INT_2D_BINDING 17
 
-#define RD_UINT_3D_BINDING 18
+#define RD_INT_3D_BINDING 18
 
-#define RD_UINT_2DMS_ARRAY_BINDING 19
-#define RD_UINT_2DMS_BINDING 19
+#define RD_INT_2DMS_ARRAY_BINDING 19
+#define RD_INT_2DMS_BINDING 19
 
 #define RD_POINT_SAMPLER_BINDING 50
 #define RD_LINEAR_SAMPLER_BINDING 51

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -123,7 +123,7 @@ CaptureContext::CaptureContext(PersistantConfig &cfg) : m_Config(cfg)
                "a connection issue.")
                 .arg(err.Message());
       }
-      else if(err.code == ResultCode::ReplayDeviceLost)
+      else if(err.code == ResultCode::DeviceLost)
       {
         title = tr("Device Lost error");
         text = tr("%1.\n\n"
@@ -133,7 +133,7 @@ CaptureContext::CaptureContext(PersistantConfig &cfg) : m_Config(cfg)
                   "API usage errors can cause this kind of problem.")
                    .arg(err.Message());
       }
-      else if(err.code == ResultCode::ReplayOutOfMemory)
+      else if(err.code == ResultCode::OutOfMemory)
       {
         title = tr("Out of memory");
         text =
@@ -168,12 +168,13 @@ CaptureContext::CaptureContext(PersistantConfig &cfg) : m_Config(cfg)
       }
       else if(CrashDialog::CaptureTooLarge(m_Config))
       {
-        text +=
-            tr("<html>Your capture is too lage to upload as a crash report so this can't be "
-               "automatically reported. "
-               "Please email me at <a "
-               "href=\"mailto:baldurk@baldurk.org?subject=RenderDoc%20Unrecoverable%20error\">"
-               "baldurk@baldurk.org</a> with information and I can help investigate.</html>");
+        text = tr("<html>%1<br><br>"
+                  "Your capture is too lage to upload as a crash report so this can't be "
+                  "automatically reported. "
+                  "Please email me at <a "
+                  "href=\"mailto:baldurk@baldurk.org?subject=RenderDoc%20Unrecoverable%20error\">"
+                  "baldurk@baldurk.org</a> with information and I can help investigate.</html>")
+                   .arg(text);
       }
       else
       {
@@ -1788,17 +1789,24 @@ void CaptureContext::SaveChanges()
 {
   bool success = true;
 
-  if(m_CaptureMods & CaptureModifications::Renames)
-    success &= SaveRenames();
+  if(!m_Replay.GetCaptureFile())
+  {
+    success = false;
+  }
+  else
+  {
+    if(m_CaptureMods & CaptureModifications::Renames)
+      success &= SaveRenames();
 
-  if(m_CaptureMods & CaptureModifications::Bookmarks)
-    success &= SaveBookmarks();
+    if(m_CaptureMods & CaptureModifications::Bookmarks)
+      success &= SaveBookmarks();
 
-  if(m_CaptureMods & CaptureModifications::Notes)
-    success &= SaveNotes();
+    if(m_CaptureMods & CaptureModifications::Notes)
+      success &= SaveNotes();
 
-  if(m_CaptureMods & CaptureModifications::EditedShaders)
-    success &= SaveEdits();
+    if(m_CaptureMods & CaptureModifications::EditedShaders)
+      success &= SaveEdits();
+  }
 
   if(!success)
   {
@@ -1827,7 +1835,7 @@ bool CaptureContext::SaveRenames()
   props.type = SectionType::ResourceRenames;
   props.version = 1;
 
-  return Replay().GetCaptureAccess()->WriteSection(props, json.toUtf8()).OK();
+  return Replay().GetCaptureFile()->WriteSection(props, json.toUtf8()).OK();
 }
 
 void CaptureContext::LoadRenames(const QString &data)
@@ -1879,7 +1887,7 @@ bool CaptureContext::SaveBookmarks()
   props.type = SectionType::Bookmarks;
   props.version = 1;
 
-  return Replay().GetCaptureAccess()->WriteSection(props, json.toUtf8()).OK();
+  return Replay().GetCaptureFile()->WriteSection(props, json.toUtf8()).OK();
 }
 
 void CaptureContext::LoadBookmarks(const QString &data)
@@ -1919,7 +1927,7 @@ bool CaptureContext::SaveNotes()
 
   ANALYTIC_SET(UIFeatures.CaptureComments, true);
 
-  return Replay().GetCaptureAccess()->WriteSection(props, json.toUtf8()).OK();
+  return Replay().GetCaptureFile()->WriteSection(props, json.toUtf8()).OK();
 }
 
 void CaptureContext::LoadNotes(const QString &data)
@@ -1954,7 +1962,7 @@ bool CaptureContext::SaveEdits()
   props.type = SectionType::EditedShaders;
   props.version = 1;
 
-  return Replay().GetCaptureAccess()->WriteSection(props, json.toUtf8()).OK();
+  return Replay().GetCaptureFile()->WriteSection(props, json.toUtf8()).OK();
 }
 
 void CaptureContext::LoadEdits(const QString &data)

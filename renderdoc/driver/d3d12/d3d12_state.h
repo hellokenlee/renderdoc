@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -67,6 +67,9 @@ struct D3D12RenderState
 
   rdcarray<ResourceId> GetRTVIDs() const;
   ResourceId GetDSVID() const;
+
+  float depthBias = 0.0f, depthBiasClamp = 0.0f, slopeScaledDepthBias = 0.0f;
+  D3D12_INDEX_BUFFER_STRIP_CUT_VALUE cutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
 
   ResourceId shadingRateImage;
   D3D12_SHADING_RATE shadingRate;
@@ -188,7 +191,7 @@ struct D3D12RenderState
   } samplePos;
 
   D3D12_PRIMITIVE_TOPOLOGY topo = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
-  UINT stencilRef = 0;
+  UINT stencilRefFront = 0, stencilRefBack = 0;
   float blendFactor[4] = {};
 
   float depthBoundsMin = 0.0f, depthBoundsMax = 1.0f;

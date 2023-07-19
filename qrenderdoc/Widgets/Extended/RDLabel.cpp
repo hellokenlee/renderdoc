@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -187,6 +187,7 @@ void RDLabel::resizeEvent(QResizeEvent *event)
     }
   }
 
+  emit resized();
   QLabel::resizeEvent(event);
 }
 

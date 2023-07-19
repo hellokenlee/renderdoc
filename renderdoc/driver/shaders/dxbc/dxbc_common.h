@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -222,6 +222,11 @@ enum VariableType
   VARTYPE_MIN12INT,
   VARTYPE_MIN16INT,
   VARTYPE_MIN16UINT,
+  VARTYPE_INT16,
+  VARTYPE_UINT16,
+  VARTYPE_FLOAT16,
+  VARTYPE_INT64,
+  VARTYPE_UINT64,
 };
 
 struct ShaderInputBind

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1989,7 +1989,10 @@ void ReplayProxy::DeltaTransferBytes(SerialiserType &xferser, bytebuf &reference
         if(offs < uncompSize)
         {
           if(uncompSize - offs > 128)
+          {
             RDCERR("Unexpected amount of padding: %llu", uncompSize - offs);
+            m_IsErrored = true;
+          }
           ser.GetReader()->Read(NULL, uncompSize - offs);
         }
       }
@@ -1997,6 +2000,7 @@ void ReplayProxy::DeltaTransferBytes(SerialiserType &xferser, bytebuf &reference
       if(deltas.empty())
       {
         RDCERR("Unexpected empty delta list");
+        m_IsErrored = true;
       }
       else if(referenceData.empty())
       {
@@ -2317,6 +2321,10 @@ void ReplayProxy::RemapProxyTextureIfNeeded(TextureDescription &tex, GetTextureD
     switch(tex.format.type)
     {
       case ResourceFormatType::S8:
+        tex.format.compType = CompType::UInt;
+        params.remap = RemapTexture::RGBA8;
+        tex.creationFlags &= ~TextureCategory::DepthTarget;
+        break;
       case ResourceFormatType::D16S8:
       case ResourceFormatType::D24S8:
       case ResourceFormatType::D32S8:

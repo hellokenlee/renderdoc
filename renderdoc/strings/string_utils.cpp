@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -139,6 +139,18 @@ rdcstr strip_extension(const rdcstr &path)
     return path;
 
   return path.substr(0, offs);
+}
+
+void strip_nonbasic(rdcstr &str)
+{
+  for(char &c : str)
+  {
+    if((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' ||
+       c == ' ')
+      continue;
+
+    c = '_';
+  }
 }
 
 void split(const rdcstr &in, rdcarray<rdcstr> &out, const char sep)

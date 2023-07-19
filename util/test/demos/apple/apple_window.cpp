@@ -1,7 +1,7 @@
 /******************************************************************************
 * The MIT License (MIT)
 *
-* Copyright (c) 2022 Baldur Karlsson
+* Copyright (c) 2022-2023 Baldur Karlsson
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -129,10 +129,10 @@ void MyAppDelegate::CreateWindow(int width, int height, const char *title)
 
   NS::View *view = _pWindow->contentView();
   view->setWantsLayer(true);
-  view->setLayer(CA::MetalLayer::layer());
+  view->setLayer((CA::Layer *)CA::MetalLayer::layer());
 
   _pWindow->setTitle(NS::String::string(title, NS::StringEncoding::UTF8StringEncoding));
-  _pWindow->makeKeyAndOrderFront(nullptr);
+  _pWindow->makeKeyAndOrderFront(NULL);
 }
 
 NS::View *MyAppDelegate::GetContentView()
@@ -147,7 +147,7 @@ NS::Window *MyAppDelegate::GetWindow()
 
 AppleWindow::~AppleWindow()
 {
-  pAppDelegate = nullptr;
+  pAppDelegate = NULL;
 }
 
 AppleWindow::AppleWindow(int width, int height, const char *title) : GraphicsWindow(title)

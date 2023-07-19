@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2022 Baldur Karlsson
+ * Copyright (c) 2022-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -35,6 +35,7 @@ struct MetalDrawableInfo
 {
   CA::MetalLayer *mtlLayer;
   WrappedMTLTexture *texture;
+  NS::UInteger drawableID;
 };
 
 class MetalCapturer : public IFrameCapturer
@@ -105,6 +106,8 @@ public:
   bool supportsFunctionPointersFromRender();
   bool supportsRaytracingFromRender();
   bool supportsPrimitiveMotionBlur();
+  bool shouldMaximizeConcurrentCompilation();
+  NS::UInteger maximumConcurrentCompilationTaskCount();
   // End of MTLDevice APIs
 
   CaptureState &GetStateRef() { return m_State; }

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1943,6 +1943,18 @@ void ThreadState::MarkResourceAccess(ShaderDebugState *state, DXBCBytecode::Oper
     change.before = change.after;
   else
     accessed.push_back(bp);
+}
+
+void ThreadState::PrepareInitial(ShaderDebugState &initial)
+{
+  for(const ShaderVariable &v : variables)
+    initial.changes.push_back({ShaderVariable(), v});
+
+  if(debug)
+  {
+    const Operation &nextOp = program->GetInstruction(0);
+    debug->GetCallstack(0, nextOp.offset, initial.callstack);
+  }
 }
 
 void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
@@ -3892,22 +3904,32 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       int sampleCount = 0;
 
       // Default assumptions for bindings
-      BindingSlot resourceBinding((uint32_t)op.operands[2].indices[0].index, 0);
+      Operand destOperand = op.operands[0];
+      Operand resourceOperand = op.operands[2];
+      Operand samplerOperand;
+      if(op.operands.size() > 3)
+        samplerOperand = op.operands[3];
+      if(op.operation == OPCODE_GATHER4_PO || op.operation == OPCODE_GATHER4_PO_C)
+      {
+        resourceOperand = op.operands[3];
+        samplerOperand = op.operands[4];
+      }
+
+      BindingSlot resourceBinding((uint32_t)resourceOperand.indices[0].index, 0);
       BindingSlot samplerBinding(0, 0);
 
       for(size_t i = 0; i < program->GetNumDeclarations(); i++)
       {
         const Declaration &decl = program->GetDeclaration(i);
 
-        if(decl.declaration == OPCODE_DCL_SAMPLER && op.operands.size() > 3 &&
-           decl.operand.sameResource(op.operands[3]))
+        if(decl.declaration == OPCODE_DCL_SAMPLER && decl.operand.sameResource(samplerOperand))
         {
           samplerMode = decl.samplerMode;
           samplerBinding = GetBindingSlotForDeclaration(*program, decl);
         }
         if(op.operation == OPCODE_LD && decl.declaration == OPCODE_DCL_RESOURCE &&
            decl.resource.dim == RESOURCE_DIMENSION_BUFFER &&
-           decl.operand.sameResource(op.operands[2]))
+           decl.operand.sameResource(resourceOperand))
         {
           resourceDim = decl.resource.dim;
 
@@ -3941,8 +3963,8 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
 
           for(int c = 0; c < 4; c++)
           {
-            uint8_t comp = op.operands[2].comps[c];
-            if(op.operands[2].comps[c] == 0xff)
+            uint8_t comp = resourceOperand.comps[c];
+            if(resourceOperand.comps[c] == 0xff)
               comp = 0;
 
             fetch.value.u32v[c] = result.value.u32v[comp];
@@ -3951,17 +3973,17 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
           // if we are assigning into a scalar, SetDst expects the result to be in .x (as normally
           // we are assigning FROM a scalar also).
           // to match this expectation, propogate the component across.
-          if(op.operands[0].comps[0] != 0xff && op.operands[0].comps[1] == 0xff &&
-             op.operands[0].comps[2] == 0xff && op.operands[0].comps[3] == 0xff)
-            fetch.value.u32v[0] = fetch.value.u32v[op.operands[0].comps[0]];
+          if(destOperand.comps[0] != 0xff && destOperand.comps[1] == 0xff &&
+             destOperand.comps[2] == 0xff && destOperand.comps[3] == 0xff)
+            fetch.value.u32v[0] = fetch.value.u32v[destOperand.comps[0]];
 
-          SetDst(state, op.operands[0], op, fetch);
+          SetDst(state, destOperand, op, fetch);
 
           MarkResourceAccess(state, TYPE_RESOURCE, resourceBinding);
 
           return;
         }
-        if(decl.declaration == OPCODE_DCL_RESOURCE && decl.operand.sameResource(op.operands[2]))
+        if(decl.declaration == OPCODE_DCL_RESOURCE && decl.operand.sameResource(resourceOperand))
         {
           resourceDim = decl.resource.dim;
           resourceRetType = decl.resource.resType[0];
@@ -3996,7 +4018,7 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       {
         ShaderVariable invalidResult("tex", 0.0f, 0.0f, 0.0f, 0.0f);
 
-        SetDst(state, op.operands[0], op, invalidResult);
+        SetDst(state, destOperand, op, invalidResult);
         break;
       }
 
@@ -4034,22 +4056,22 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
       if(srcOpers.size() >= 4)
         lodOrCompareValue = srcOpers[3].value.f32v[0];
       if(op.operation == OPCODE_GATHER4_PO_C)
-        lodOrCompareValue = srcOpers[4].value.f32v[0];
+        lodOrCompareValue = srcOpers[5].value.f32v[0];
 
       uint8_t swizzle[4] = {0};
       for(int i = 0; i < 4; i++)
       {
-        if(op.operands[2].comps[i] == 0xff)
+        if(resourceOperand.comps[i] == 0xff)
           swizzle[i] = 0;
         else
-          swizzle[i] = op.operands[2].comps[i];
+          swizzle[i] = resourceOperand.comps[i];
       }
 
       GatherChannel gatherChannel = GatherChannel::Red;
       if(op.operation == OPCODE_GATHER4 || op.operation == OPCODE_GATHER4_C ||
          op.operation == OPCODE_GATHER4_PO || op.operation == OPCODE_GATHER4_PO_C)
       {
-        gatherChannel = (GatherChannel)op.operands[3].comps[0];
+        gatherChannel = (GatherChannel)samplerOperand.comps[0];
       }
 
       // for bias instruction we can't do a SampleGradBias, so add the bias into the sampler state.
@@ -4077,10 +4099,10 @@ void ThreadState::StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
                                            op.str.c_str(), lookupResult))
       {
         // should be a better way of doing this
-        if(op.operands[0].comps[1] == 0xff)
-          lookupResult.value.s32v[0] = lookupResult.value.s32v[op.operands[0].comps[0]];
+        if(destOperand.comps[1] == 0xff)
+          lookupResult.value.s32v[0] = lookupResult.value.s32v[destOperand.comps[0]];
 
-        SetDst(state, op.operands[0], op, lookupResult);
+        SetDst(state, destOperand, op, lookupResult);
       }
       else
       {
@@ -4952,10 +4974,18 @@ void GatherPSInputDataForInitialValues(const DXBC::DXBCContainer *dxbc,
     bool included = true;
 
     // handled specially to account for SV_ ordering
-    if(sig.systemValue == ShaderBuiltin::PrimitiveIndex ||
-       sig.systemValue == ShaderBuiltin::MSAACoverage ||
+    if(sig.systemValue == ShaderBuiltin::MSAACoverage ||
        sig.systemValue == ShaderBuiltin::IsFrontFace ||
        sig.systemValue == ShaderBuiltin::MSAASampleIndex)
+    {
+      psInputDefinition += "//";
+      included = false;
+    }
+
+    // it seems sometimes primitive ID can be included within inputs and isn't subject to the SV_
+    // ordering restrictions - possibly to allow for geometry shaders to output the primitive ID as
+    // an interpolant. Only comment it out if it's the last input.
+    if(i + 1 == numInputs && sig.systemValue == ShaderBuiltin::PrimitiveIndex)
     {
       psInputDefinition += "//";
       included = false;
@@ -5652,8 +5682,7 @@ rdcarray<ShaderDebugState> InterpretDebugger::ContinueDebug(DXBCDebug::DebugAPIW
   {
     ShaderDebugState initial;
 
-    for(const ShaderVariable &v : active.variables)
-      initial.changes.push_back({ShaderVariable(), v});
+    active.PrepareInitial(initial);
 
     ret.push_back(std::move(initial));
 

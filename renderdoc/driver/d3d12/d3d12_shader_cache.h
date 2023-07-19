@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -45,7 +45,7 @@ public:
   ID3DBlob *MakeRootSig(const rdcarray<D3D12_ROOT_PARAMETER1> &params,
                         D3D12_ROOT_SIGNATURE_FLAGS Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE,
                         UINT NumStaticSamplers = 0,
-                        const D3D12_STATIC_SAMPLER_DESC *StaticSamplers = NULL);
+                        const D3D12_STATIC_SAMPLER_DESC1 *StaticSamplers = NULL);
   ID3DBlob *MakeRootSig(const D3D12RootSignature &rootsig);
 
   // must match the values in fixedcol.hlsl
@@ -70,4 +70,7 @@ private:
 
   bool m_ShaderCacheDirty = false, m_CacheShaders = false;
   std::map<uint32_t, ID3DBlob *> m_ShaderCache;
+
+  D3D12_STATIC_SAMPLER_DESC1 Upconvert(const D3D12_STATIC_SAMPLER_DESC &StaticSampler);
+  D3D12_STATIC_SAMPLER_DESC Downconvert(const D3D12_STATIC_SAMPLER_DESC1 &StaticSampler);
 };

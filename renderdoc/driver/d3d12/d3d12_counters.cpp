@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include "core/settings.h"
 #include "driver/ihv/amd/amd_counters.h"
 #include "driver/ihv/nv/nv_d3d12_counters.h"
 #include "d3d12_command_list.h"
@@ -31,6 +32,8 @@
 #include "d3d12_common.h"
 #include "d3d12_device.h"
 #include "d3d12_replay.h"
+
+RDOC_EXTERN_CONFIG(bool, D3D12_Debug_SingleSubmitFlushing);
 
 rdcarray<GPUCounter> D3D12Replay::EnumerateCounters()
 {
@@ -622,7 +625,7 @@ rdcarray<CounterResult> D3D12Replay::FetchCounters(const rdcarray<GPUCounter> &c
   {
     RDResult err;
     SET_ERROR_RESULT(
-        err, ResultCode::ReplayDeviceLost,
+        err, ResultCode::DeviceLost,
         "D3D12 counters require Win10 developer mode enabled: Settings > Update & Security "
         "> For Developers > Developer Mode");
     m_pDevice->ReportFatalError(err);
@@ -634,10 +637,11 @@ rdcarray<CounterResult> D3D12Replay::FetchCounters(const rdcarray<GPUCounter> &c
   // replay the events to perform all the queries
   m_pDevice->ReplayLog(0, maxEID, eReplay_Full);
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-  m_pDevice->ExecuteLists();
-  m_pDevice->FlushLists(true);
-#endif
+  if(D3D12_Debug_SingleSubmitFlushing())
+  {
+    m_pDevice->ExecuteLists();
+    m_pDevice->FlushLists(true);
+  }
 
   // Only supported with developer mode drivers!!!
   m_pDevice->SetStablePowerState(FALSE);

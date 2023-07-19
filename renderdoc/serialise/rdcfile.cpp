@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -329,9 +329,8 @@ void RDCFile::Init(StreamReader &reader)
 
   if(header.magic != MAGIC_HEADER)
   {
-    SET_ERROR_RESULT(m_Error, ResultCode::FileCorrupted,
-                     "Invalid capture file. Expected magic %08x, got %08x.", MAGIC_HEADER,
-                     (uint32_t)header.magic);
+    SET_ERROR_RESULT(m_Error, ResultCode::FileUnrecognised,
+                     "Unrecognised file type. File magic number is %08x.", (uint32_t)header.magic);
     return;
   }
 
@@ -1222,7 +1221,8 @@ StreamWriter *RDCFile::WriteSection(const SectionProperties &props)
   }
 
   // create a writer for writing to disk. It shouldn't close the file
-  StreamWriter *fileWriter = new StreamWriter(m_File, Ownership::Nothing);
+  StreamWriter *fileWriter =
+      new StreamWriter(FileWriter::MakeThreaded(m_File, Ownership::Nothing), Ownership::Stream);
 
   StreamWriter *compWriter = NULL;
 
@@ -1246,8 +1246,6 @@ StreamWriter *RDCFile::WriteSection(const SectionProperties &props)
 
   // register a destroy callback to tidy up the section at the end
   fileWriter->AddCloseCallback([this, type, name, headerOffset, dataOffset, fileWriter, compWriter]() {
-    FileIO::fflush(m_File);
-
     // the offset of the file writer is how many bytes were written to disk - the compressed length.
     uint64_t compressedLength = fileWriter->GetOffset();
 

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -946,12 +946,21 @@ public:
     return this->GetReal();
   }
 
+  ResourceId GetMappableID()
+  {
+    if(m_Heap)
+      return m_Heap->GetResourceID();
+    return this->GetResourceID();
+  }
+
   void SetHeap(ID3D12Heap *heap)
   {
     m_Heap = (WrappedID3D12Heap *)heap;
     SAFE_ADDREF(m_Heap);
   }
   static void RefBuffers(D3D12ResourceManager *rm);
+  static void GetMappableIDs(D3D12ResourceManager *rm, const std::unordered_set<ResourceId> &refdIDs,
+                             std::unordered_set<ResourceId> &mappableIDs);
 
   static rdcarray<ID3D12Resource *> AddRefBuffersBeforeCapture(D3D12ResourceManager *rm);
 
@@ -980,7 +989,7 @@ public:
       : WrappedDeviceChild12(real, device)
   {
     if(IsReplayMode(device->GetState()))
-      device->GetResourceList()[GetResourceID()] = this;
+      device->AddReplayResource(GetResourceID(), this);
 
     // assuming only valid for buffers
     if(m_pReal->GetDesc().Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
@@ -1013,7 +1022,7 @@ public:
 
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObject)
   {
-    if(riid == __uuidof(ID3D12Resource2))
+    if(riid == __uuidof(ID3D12ManualWriteTrackingResource))
     {
       return E_NOINTERFACE;
     }

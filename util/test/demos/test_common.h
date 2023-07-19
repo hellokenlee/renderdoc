@@ -1,7 +1,7 @@
 /******************************************************************************
 * The MIT License (MIT)
 *
-* Copyright (c) 2019-2022 Baldur Karlsson
+* Copyright (c) 2019-2023 Baldur Karlsson
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -26,6 +26,8 @@
 
 #if defined(WIN32)
 #include "win32/win32_platform.h"
+#elif defined(ANDROID)
+#include "android/android_platform.h"
 #elif defined(__linux__)
 #include "linux/linux_platform.h"
 #elif defined(__APPLE__)

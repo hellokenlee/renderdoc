@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -796,7 +796,10 @@ Win32CallstackResolver::Win32CallstackResolver(bool interactive, byte *moduleDB,
       const wchar_t *DIApaths[] = {
           // try to see if it's just in the PATH somewhere
           L"msdia140.dll",
-          // otherwise try each VS2017/2019 SKU
+          // otherwise try each VS2017/2019/2022 SKU
+          L"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\DIA SDK\\" DIA140,
+          L"C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\DIA SDK\\" DIA140,
+          L"C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\DIA SDK\\" DIA140,
           L"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community\\DIA SDK\\" DIA140,
           L"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise\\DIA SDK\\" DIA140,
           L"C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Professional\\DIA SDK\\" DIA140,

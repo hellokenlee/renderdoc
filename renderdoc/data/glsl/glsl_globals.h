@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -108,6 +108,7 @@ precision highp int;
 #define SHADER_D24_UNORM_S8_UINT 3
 #define SHADER_D32_SFLOAT 4
 #define SHADER_D32_SFLOAT_S8_UINT 5
+#define SHADER_S8_UINT 6
 
 // divide MS<->buffer workgroups by 64
 #define MS_DISPATCH_LOCAL_SIZE 64

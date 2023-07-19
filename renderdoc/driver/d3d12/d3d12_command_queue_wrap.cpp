@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -26,6 +26,8 @@
 #include "core/settings.h"
 #include "d3d12_command_list.h"
 #include "d3d12_resources.h"
+
+RDOC_EXTERN_CONFIG(bool, D3D12_Debug_SingleSubmitFlushing);
 
 template <typename SerialiserType>
 bool WrappedID3D12CommandQueue::Serialise_UpdateTileMappings(
@@ -489,9 +491,8 @@ bool WrappedID3D12CommandQueue::Serialise_ExecuteCommandLists(SerialiserType &se
         {
           ID3D12CommandList *list = Unwrap(ppCommandLists[i]);
           real->ExecuteCommandLists(1, &list);
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-          m_pDevice->GPUSyncAllQueues();
-#endif
+          if(D3D12_Debug_SingleSubmitFlushing())
+            m_pDevice->GPUSync();
         }
         else
         {
@@ -503,8 +504,8 @@ bool WrappedID3D12CommandQueue::Serialise_ExecuteCommandLists(SerialiserType &se
 
           for(size_t c = 1; c < info.crackedLists.size(); c++)
           {
-            // ensure all work on all queues has finished
-            m_pDevice->GPUSyncAllQueues();
+            // ensure all GPU work has finished
+            m_pDevice->GPUSync();
 
             if(m_pDevice->HasFatalError())
               return false;
@@ -523,9 +524,8 @@ bool WrappedID3D12CommandQueue::Serialise_ExecuteCommandLists(SerialiserType &se
               return false;
           }
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-          m_pDevice->GPUSyncAllQueues();
-#endif
+          if(D3D12_Debug_SingleSubmitFlushing())
+            m_pDevice->GPUSync();
         }
       }
 
@@ -709,15 +709,18 @@ bool WrappedID3D12CommandQueue::Serialise_ExecuteCommandLists(SerialiserType &se
           }
         }
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-        for(size_t i = 0; i < rerecordedCmds.size(); i++)
+        if(D3D12_Debug_SingleSubmitFlushing())
         {
-          real->ExecuteCommandLists(1, &rerecordedCmds[i]);
-          m_pDevice->GPUSyncAllQueues();
+          for(size_t i = 0; i < rerecordedCmds.size(); i++)
+          {
+            real->ExecuteCommandLists(1, &rerecordedCmds[i]);
+            m_pDevice->GPUSync();
+          }
         }
-#else
-        real->ExecuteCommandLists((UINT)rerecordedCmds.size(), &rerecordedCmds[0]);
-#endif
+        else
+        {
+          real->ExecuteCommandLists((UINT)rerecordedCmds.size(), &rerecordedCmds[0]);
+        }
       }
     }
   }
@@ -886,6 +889,12 @@ void WrappedID3D12CommandQueue::ExecuteCommandListsInternal(UINT NumCommandLists
     {
       rdcarray<MapState> maps = m_pDevice->GetMaps();
 
+      // get the Mappable referenced IDs. With the case of placed resources the resource that's
+      // mapped may not be the one that was bound but they may overlap, so we use the heap as
+      // reference for non-committed resource.
+      std::unordered_set<ResourceId> mappableIDs;
+      WrappedID3D12Resource::GetMappableIDs(GetResourceManager(), refdIDs, mappableIDs);
+
       for(auto it = maps.begin(); it != maps.end(); ++it)
       {
         WrappedID3D12Resource *res = GetWrapped(it->res);
@@ -893,10 +902,10 @@ void WrappedID3D12CommandQueue::ExecuteCommandListsInternal(UINT NumCommandLists
         size_t size = (size_t)it->totalSize;
 
         // only need to flush memory that could affect this submitted batch of work
-        if(refdIDs.find(res->GetResourceID()) == refdIDs.end())
+        if(mappableIDs.find(res->GetMappableID()) == mappableIDs.end())
         {
-          RDCDEBUG("Map of memory %s not referenced in this queue - not flushing",
-                   ToStr(res->GetResourceID()).c_str());
+          RDCDEBUG("Map of memory %s (mappable ID %s) not referenced in this queue - not flushing",
+                   ToStr(res->GetResourceID()).c_str(), ToStr(res->GetMappableID()).c_str());
           continue;
         }
 
@@ -923,9 +932,6 @@ void WrappedID3D12CommandQueue::ExecuteCommandListsInternal(UINT NumCommandLists
           if(type >= ARRAY_COUNT(queueReadback.lists))
           {
             RDCERR("Unexpected invalid queue type %s", ToStr(type).c_str());
-          }
-          else if(1)
-          {
           }
           else
           {

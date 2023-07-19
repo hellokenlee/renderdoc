@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2022 Baldur Karlsson
+ * Copyright (c) 2022-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -645,6 +645,16 @@ bool WrappedMTLDevice::supportsRaytracingFromRender()
 bool WrappedMTLDevice::supportsPrimitiveMotionBlur()
 {
   return Unwrap(this)->supportsPrimitiveMotionBlur();
+}
+
+bool WrappedMTLDevice::shouldMaximizeConcurrentCompilation()
+{
+  return Unwrap(this)->shouldMaximizeConcurrentCompilation();
+}
+
+NS::UInteger WrappedMTLDevice::maximumConcurrentCompilationTaskCount()
+{
+  return Unwrap(this)->maximumConcurrentCompilationTaskCount();
 }
 
 // End of MTLDevice APIs

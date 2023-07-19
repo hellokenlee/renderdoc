@@ -1,7 +1,7 @@
 /******************************************************************************
 * The MIT License (MIT)
 *
-* Copyright (c) 2019-2022 Baldur Karlsson
+* Copyright (c) 2019-2023 Baldur Karlsson
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -139,6 +139,9 @@ struct VulkanWindow : public GraphicsWindow, public VulkanCommands
   virtual ~VulkanWindow();
   void Shutdown();
 
+  vkh::RenderPassBeginInfo beginRP() { return vkh::RenderPassBeginInfo(rp, GetFB(), scissor); }
+  void setViewScissor(VkCommandBuffer cmd);
+
   size_t GetCount() { return imgs.size(); }
   VkImage GetImage(size_t idx = ~0U)
   {
@@ -197,12 +200,19 @@ struct VulkanGraphicsTest : public GraphicsTest
   VulkanWindow *MakeWindow(int width, int height, const char *title);
 
   bool Running();
-  VkImage StartUsingBackbuffer(VkCommandBuffer cmd, VkAccessFlags nextUse, VkImageLayout layout,
+  VkImage StartUsingBackbuffer(VkCommandBuffer cmd,
+                               VkAccessFlags nextUse = VK_ACCESS_TRANSFER_WRITE_BIT |
+                                                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                               VkImageLayout layout = VK_IMAGE_LAYOUT_GENERAL,
                                VulkanWindow *window = NULL);
-  void FinishUsingBackbuffer(VkCommandBuffer cmd, VkAccessFlags prevUse, VkImageLayout layout,
+  void FinishUsingBackbuffer(VkCommandBuffer cmd,
+                             VkAccessFlags prevUse = VK_ACCESS_TRANSFER_WRITE_BIT |
+                                                     VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                             VkImageLayout layout = VK_IMAGE_LAYOUT_GENERAL,
                              VulkanWindow *window = NULL);
   void Submit(int index, int totalSubmits, const std::vector<VkCommandBuffer> &cmds,
               const std::vector<VkCommandBuffer> &seccmds = {});
+  void SubmitAndPresent(const std::vector<VkCommandBuffer> &cmds);
   void Present();
 
   VkPipelineShaderStageCreateInfo CompileShaderModule(
@@ -273,8 +283,10 @@ struct VulkanGraphicsTest : public GraphicsTest
 
   bool forceGraphicsQueue = false;
   bool forceComputeQueue = false;
+  bool forceTransferQueue = false;
   uint32_t graphicsQueueFamilyIndex = ~0U;
   uint32_t computeQueueFamilyIndex = ~0U;
+  uint32_t transferQueueFamilyIndex = ~0U;
 
   bool hasExt(const char *ext);
 
@@ -311,6 +323,9 @@ struct VulkanGraphicsTest : public GraphicsTest
   VulkanWindow *mainWindow = NULL;
 
   VulkanCommands *headlessCmds = NULL;
+
+  VkPipeline DefaultTriPipe;
+  AllocatedBuffer DefaultTriVB;
 
   // VMA
   bool vmaDedicated = false;

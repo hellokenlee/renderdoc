@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2022 Baldur Karlsson
+ * Copyright (c) 2022-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -159,6 +159,7 @@ MTL_DECLARE_REFLECTION_TYPE(ArgumentBuffersTier);
 MTL_DECLARE_REFLECTION_TYPE(DepthClipMode);
 MTL_DECLARE_REFLECTION_TYPE(TriangleFillMode);
 MTL_DECLARE_REFLECTION_TYPE(CullMode);
+MTL_DECLARE_REFLECTION_TYPE(IndexType);
 
 template <>
 inline rdcliteral TypeName<NS::Range>()
@@ -247,7 +248,7 @@ struct VertexBufferLayoutDescriptor
   NS::UInteger stepRate = 1;
 };
 
-// MTLVertexBufferLayoutDescriptor : based on the interface defined in
+// MTLVertexDescriptor : based on the interface defined in
 // Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX12.1.sdk/System/Library/Frameworks/Metal.framework/Headers/MTLVertexDescriptor.h
 struct VertexDescriptor
 {
@@ -258,6 +259,8 @@ struct VertexDescriptor
   rdcarray<VertexAttributeDescriptor> attributes;
 };
 
+// Helper struct for holding MTLLinkedFunctions::groups data
+// NSDictionary<NSString*, NSArray<id<MTLFunction>>*> *groups;
 struct FunctionGroup
 {
   rdcstr callsite;
@@ -403,6 +406,8 @@ struct RenderPassSampleBufferAttachmentDescriptor
   NS::UInteger endOfFragmentSampleIndex = MTLCounterDontSample;
 };
 
+// MTLRenderPassDescriptor : based on the interface defined in
+// Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX12.1.sdk/System/Library/Frameworks/Metal.framework/Headers/MTLRenderPass.h
 struct RenderPassDescriptor
 {
   RenderPassDescriptor() = default;

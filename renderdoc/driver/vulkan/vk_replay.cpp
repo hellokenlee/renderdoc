@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -43,6 +43,8 @@
 
 #define VULKAN 1
 #include "data/glsl/glsl_ubos_cpp.h"
+
+RDOC_EXTERN_CONFIG(bool, Vulkan_Debug_SingleSubmitFlushing);
 
 static const char *SPIRVDisassemblyTarget = "SPIR-V (RenderDoc)";
 static const char *AMDShaderInfoTarget = "AMD_shader_info";
@@ -843,9 +845,8 @@ void VulkanReplay::RenderCheckerboard(FloatVector dark, FloatVector light)
   vkr = vt->EndCommandBuffer(Unwrap(cmd));
   CheckVkResult(vkr);
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-  m_pDriver->SubmitCmds();
-#endif
+  if(Vulkan_Debug_SingleSubmitFlushing())
+    m_pDriver->SubmitCmds();
 }
 
 void VulkanReplay::RenderHighlightBox(float w, float h, float scale)
@@ -946,9 +947,8 @@ void VulkanReplay::RenderHighlightBox(float w, float h, float scale)
   vkr = vt->EndCommandBuffer(Unwrap(cmd));
   CheckVkResult(vkr);
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-  m_pDriver->SubmitCmds();
-#endif
+  if(Vulkan_Debug_SingleSubmitFlushing())
+    m_pDriver->SubmitCmds();
 }
 
 void VulkanReplay::GetBufferData(ResourceId buff, uint64_t offset, uint64_t len, bytebuf &retData)
@@ -1448,6 +1448,9 @@ void VulkanReplay::SavePipelineState(uint32_t eventId)
         break;
     }
 
+    ret.rasterizer.provokingVertexFirst =
+        p.provokingVertex == VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
+
     ret.rasterizer.depthBiasEnable = state.depthBiasEnable != VK_FALSE;
     ret.rasterizer.depthBias = state.bias.depth;
     ret.rasterizer.depthBiasClamp = state.bias.biasclamp;
@@ -1846,6 +1849,10 @@ void VulkanReplay::SavePipelineState(uint32_t eventId)
     ret.currentPass.framebuffer.attachments.clear();
   }
 
+  ret.currentPass.colorFeedbackAllowed = (state.feedbackAspects & VK_IMAGE_ASPECT_COLOR_BIT) != 0;
+  ret.currentPass.depthFeedbackAllowed = (state.feedbackAspects & VK_IMAGE_ASPECT_DEPTH_BIT) != 0;
+  ret.currentPass.stencilFeedbackAllowed = (state.feedbackAspects & VK_IMAGE_ASPECT_STENCIL_BIT) != 0;
+
   // Descriptor sets
   ret.graphics.descriptorSets.resize(state.graphics.descSets.size());
   ret.compute.descriptorSets.resize(state.compute.descSets.size());
@@ -2092,7 +2099,8 @@ void VulkanReplay::SavePipelineState(uint32_t eventId)
                 el.compareFunction = MakeCompareFunc(sampl.compareOp);
                 el.minLOD = sampl.minLod;
                 el.maxLOD = sampl.maxLod;
-                MakeBorderColor(sampl.borderColor, el.borderColor);
+                MakeBorderColor(sampl.borderColor, el.borderColorValue.floatValue);
+                el.borderColorType = CompType::Float;
                 el.unnormalized = sampl.unnormalizedCoordinates;
                 el.seamless = sampl.seamless;
 
@@ -2119,12 +2127,12 @@ void VulkanReplay::SavePipelineState(uint32_t eventId)
                 {
                   if(sampl.borderColor == VK_BORDER_COLOR_INT_CUSTOM_EXT)
                   {
-                    for(int bord = 0; bord < 4; bord++)
-                      el.borderColor[bord] = float(sampl.customBorderColor.int32[bord]);
+                    el.borderColorValue.uintValue = sampl.customBorderColor.uint32;
+                    el.borderColorType = CompType::UInt;
                   }
                   else
                   {
-                    el.borderColor = sampl.customBorderColor.float32;
+                    el.borderColorValue.floatValue = sampl.customBorderColor.float32;
                   }
                 }
               }
@@ -2150,6 +2158,9 @@ void VulkanReplay::SavePipelineState(uint32_t eventId)
                 destSlots.binds[a].firstSlice = c.m_ImageView[viewid].range.baseArrayLayer;
                 destSlots.binds[a].numMips = c.m_ImageView[viewid].range.levelCount;
                 destSlots.binds[a].numSlices = c.m_ImageView[viewid].range.layerCount;
+
+                if(c.m_ImageView[viewid].viewType == VK_IMAGE_VIEW_TYPE_3D)
+                  destSlots.binds[a].firstSlice = destSlots.binds[a].numSlices = 0;
 
                 // temporary hack, store image layout enum in byteOffset as it's not used for images
                 destSlots.binds[a].byteOffset = convert(srcel.imageLayout);
@@ -3398,7 +3409,7 @@ void VulkanReplay::GetTextureData(ResourceId tex, const Subresource &sub,
     imCreateInfo.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
     // we'll need to cast to remap the stencil part
-    if(IsDepthAndStencilFormat(imInfo.format))
+    if(IsStencilFormat(imInfo.format))
       imCreateInfo.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
 
     imCreateInfo.extent.width = RDCMAX(1U, imCreateInfo.extent.width >> s.mip);
@@ -3446,9 +3457,8 @@ void VulkanReplay::GetTextureData(ResourceId tex, const Subresource &sub,
     // ordering
     vt->EndCommandBuffer(Unwrap(cmd));
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-    m_pDriver->SubmitCmds();
-#endif
+    if(Vulkan_Debug_SingleSubmitFlushing())
+      m_pDriver->SubmitCmds();
 
     // create framebuffer/render pass to render to
     VkAttachmentDescription attDesc = {0,
@@ -3488,7 +3498,7 @@ void VulkanReplay::GetTextureData(ResourceId tex, const Subresource &sub,
     numFBs = imCreateInfo.arrayLayers;
 
     // we'll need twice as many temp views/FBs for stencil views
-    if(IsDepthAndStencilFormat(imInfo.format))
+    if(IsStencilFormat(imInfo.format))
     {
       tmpFB = new VkFramebuffer[numFBs * 2];
       tmpView = new VkImageView[numFBs * 2];
@@ -3612,6 +3622,15 @@ void VulkanReplay::GetTextureData(ResourceId tex, const Subresource &sub,
         stencilFlags |= eTexDisplay_RemapUInt | eTexDisplay_GreenOnly;
 
         texDisplay.red = texDisplay.blue = texDisplay.alpha = false;
+
+        // S8 renders into red
+        if(IsStencilOnlyFormat(imInfo.format))
+        {
+          texDisplay.red = true;
+          texDisplay.green = false;
+          stencilFlags &= ~eTexDisplay_GreenOnly;
+        }
+
         RenderTextureInternal(texDisplay, *srcImageState, rpbegin, stencilFlags);
         renderCount++;
       }
@@ -3779,20 +3798,8 @@ void VulkanReplay::GetTextureData(ResourceId tex, const Subresource &sub,
     m_pDriver->InlineSetupImageBarriers(cmd, setupBarriers);
     m_pDriver->SubmitAndFlushImageStateBarriers(setupBarriers);
 
-    vkr = vt->EndCommandBuffer(Unwrap(cmd));
-    CheckVkResult(vkr);
-
-    GetDebugManager()->CopyTex2DMSToBuffer(readbackBuf, srcImage, imCreateInfo.extent, s.slice, 1,
-                                           s.sample, 1, imCreateInfo.format);
-
-    // fetch a new command buffer for copy & readback
-    cmd = m_pDriver->GetNextCmd();
-
-    if(cmd == VK_NULL_HANDLE)
-      return;
-
-    vkr = vt->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
-    CheckVkResult(vkr);
+    GetDebugManager()->CopyTex2DMSToBuffer(cmd, readbackBuf, srcImage, imCreateInfo.extent, s.slice,
+                                           1, s.sample, 1, imCreateInfo.format);
 
     m_pDriver->InlineCleanupImageBarriers(cmd, cleanupBarriers);
 
@@ -4169,7 +4176,7 @@ void VulkanReplay::GetTextureData(ResourceId tex, const Subresource &sub,
 
   if(tmpFB != NULL)
   {
-    if(IsDepthAndStencilFormat(imInfo.format))
+    if(IsStencilFormat(imInfo.format))
       numFBs *= 2;
 
     for(uint32_t i = 0; i < numFBs; i++)
@@ -4605,6 +4612,16 @@ RDResult Vulkan_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, IRep
   Process::RegisterEnvironmentModification(
       EnvironmentModification(EnvMod::Set, EnvSep::NoSep, "DISABLE_VULKAN_OW_OBS_CAPTURE", "1"));
 
+  // buggy program AgaueEye which also doesn't have a proper layer configuration. As a result
+  // this is likely to have side-effects but probably also on other buggy layers that duplicate
+  // sample code without even changing the layer json
+  Process::RegisterEnvironmentModification(
+      EnvironmentModification(EnvMod::Set, EnvSep::NoSep, "DISABLE_SAMPLE_LAYER", "1"));
+
+  // buggy overlay gamepp
+  Process::RegisterEnvironmentModification(
+      EnvironmentModification(EnvMod::Set, EnvSep::NoSep, "DISABLE_GAMEPP_LAYER", "1"));
+
   // mesa device select layer crashes when it calls GPDP2 inside vkCreateInstance, which fails on
   // the current loader.
   Process::RegisterEnvironmentModification(
@@ -4615,6 +4632,12 @@ RDResult Vulkan_CreateReplayDevice(RDCFile *rdc, const ReplayOptions &opts, IRep
 
   Process::RegisterEnvironmentModification(
       EnvironmentModification(EnvMod::Set, EnvSep::NoSep, "VK_LAYER_bandicam_helper_DEBUG_1", "1"));
+
+  // fpsmon not only has a buggy layer but it also picks an absurdly generic disable environment
+  // variable :(. Hopefully no other program picks this, or if it does then it's probably not a
+  // bad thing to disable too
+  Process::RegisterEnvironmentModification(
+      EnvironmentModification(EnvMod::Set, EnvSep::NoSep, "DISABLE_LAYER", "1"));
 
   Process::ApplyEnvironmentModification();
 

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -36,6 +36,11 @@ uint32_t strhash(const char *str, uint32_t existingHash = 5381);
 rdcstr get_basename(const rdcstr &path);
 rdcstr get_dirname(const rdcstr &path);
 rdcstr strip_extension(const rdcstr &path);
+
+// remove everything but alphanumeric ' ' and '.'
+// It replaces everything else with _
+// for logging strings where they might contain garbage characters
+void strip_nonbasic(rdcstr &str);
 
 void split(const rdcstr &in, rdcarray<rdcstr> &out, const char sep);
 void merge(const rdcarray<rdcstr> &in, rdcstr &out, const char sep);

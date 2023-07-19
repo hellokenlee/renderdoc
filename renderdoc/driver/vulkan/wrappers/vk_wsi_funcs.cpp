@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -390,6 +390,13 @@ bool WrappedVulkan::Serialise_vkCreateSwapchainKHR(SerialiserType &ser, VkDevice
         CreateInfo.pQueueFamilyIndices,
         VK_IMAGE_LAYOUT_UNDEFINED,
     };
+
+    if(CreateInfo.imageSharingMode == VK_SHARING_MODE_CONCURRENT)
+    {
+      uint32_t *queueFamiles = (uint32_t *)CreateInfo.pQueueFamilyIndices;
+      for(uint32_t q = 0; q < CreateInfo.queueFamilyIndexCount; q++)
+        queueFamiles[q] = m_QueueRemapping[queueFamiles[q]][0].family;
+    }
 
     for(uint32_t i = 0; i < NumImages; i++)
     {
@@ -812,18 +819,23 @@ VkResult WrappedVulkan::vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR 
 
   m_LastSwap = ResourceId();
 
+  byte *tempMem = GetTempMemory(GetNextPatchSize(pPresentInfo->pNext));
+
   if(pPresentInfo->swapchainCount == 1)
   {
-    HandlePresent(queue, pPresentInfo, unwrappedWaitSems);
+    VkPresentInfoKHR mutableInfo = *pPresentInfo;
+
+    byte *mem = tempMem;
+    UnwrapNextChain(m_State, "VkPresentInfoKHR", mem, (VkBaseInStructure *)&mutableInfo);
+
+    HandlePresent(queue, &mutableInfo, unwrappedWaitSems);
   }
   else
   {
     VkPresentInfoKHR mutableInfo = *pPresentInfo;
 
-    {
-      byte *tempMem = GetTempMemory(GetNextPatchSize(mutableInfo.pNext));
-      CopyNextChainForPatching("VkPresentInfoKHR", tempMem, (VkBaseInStructure *)&mutableInfo);
-    }
+    byte *mem = tempMem;
+    UnwrapNextChain(m_State, "VkPresentInfoKHR", mem, (VkBaseInStructure *)&mutableInfo);
 
     mutableInfo.swapchainCount = 1;
 
@@ -881,6 +893,8 @@ VkResult WrappedVulkan::vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR 
 
   unwrappedInfo.pWaitSemaphores = unwrappedWaitSems.data();
   unwrappedInfo.waitSemaphoreCount = (uint32_t)unwrappedWaitSems.size();
+
+  UnwrapNextChain(m_State, "VkPresentInfoKHR", tempMem, (VkBaseInStructure *)&unwrappedInfo);
 
   VkResult vkr;
   SERIALISE_TIME_CALL(vkr = ObjDisp(queue)->QueuePresentKHR(Unwrap(queue), &unwrappedInfo));
@@ -1075,6 +1089,10 @@ void WrappedVulkan::HandlePresent(VkQueue queue, const VkPresentInfoKHR *pPresen
 
       rdcstr overlayText =
           RenderDoc::Inst().GetOverlayText(RDCDriver::Vulkan, devWnd, m_FrameCounter, 0);
+
+      if(m_LastCaptureFailed > 0 && Timing::GetUnixTimestamp() - m_LastCaptureFailed < 5)
+        overlayText += StringFormat::Fmt("\nCapture failed: %s",
+                                         ResultDetails(m_LastCaptureError).Message().c_str());
 
       if(!overlayText.empty())
       {

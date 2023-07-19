@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2021-2022 Baldur Karlsson
+ * Copyright (c) 2021-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -96,6 +96,7 @@ enum class ModuleRecord : uint32_t
   GLOBALVAR = 7,
   FUNCTION = 8,
   ALIAS = 9,
+  COMDAT = 12,
 };
 
 enum class ConstantsRecord : uint32_t
@@ -108,6 +109,7 @@ enum class ConstantsRecord : uint32_t
   AGGREGATE = 7,
   STRING = 8,
   CSTRING = 9,
+  EVAL_BINOP = 10,
   EVAL_CAST = 11,
   EVAL_GEP = 20,
   DATA = 22,

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -575,6 +575,10 @@ HRESULT WrappedID3D11Device::QueryInterface(REFIID riid, void **ppvObject)
   static const GUID unwrappedID3D11InfoQueue__uuid = {
       0x3fc4e618, 0x3f70, 0x452a, {0x8b, 0x8f, 0xa7, 0x3a, 0xcc, 0xb5, 0x8e, 0x3d}};
 
+  // UUID for internal interface that breaks hooks {26C5DC23-E49C-4B0A-8F79-E7B1AC804D32}
+  static const GUID D3DInternal_uuid = {
+      0x26c5dc23, 0xe49c, 0x4b0a, {0x8f, 0x79, 0xe7, 0xb1, 0xac, 0x80, 0x4d, 0x32}};
+
   HRESULT hr = S_OK;
 
   if(riid == __uuidof(IUnknown))
@@ -690,6 +694,12 @@ HRESULT WrappedID3D11Device::QueryInterface(REFIID riid, void **ppvObject)
   else if(riid == IDirect3DDevice9_uuid)
   {
     RDCWARN("Trying to get IDirect3DDevice9 - not supported.");
+    *ppvObject = NULL;
+    return E_NOINTERFACE;
+  }
+  else if(riid == D3DInternal_uuid)
+  {
+    RDCWARN("Trying to get internal unsupported D3D interface - not supported.");
     *ppvObject = NULL;
     return E_NOINTERFACE;
   }
@@ -1525,7 +1535,7 @@ RDResult WrappedID3D11Device::ReadLogInitialisation(RDCFile *rdc, bool storeStru
     return m_FatalError;
 
   if(m_pDevice && m_pDevice->GetDeviceRemovedReason() != S_OK)
-    RETURN_ERROR_RESULT(ResultCode::ReplayDeviceLost, "Device lost during load: %s",
+    RETURN_ERROR_RESULT(ResultCode::DeviceLost, "Device lost during load: %s",
                         ToStr(m_pDevice->GetDeviceRemovedReason()).c_str());
 
   return ResultCode::Succeeded;
@@ -1577,7 +1587,7 @@ void WrappedID3D11Device::ReplayLog(uint32_t startEventID, uint32_t endEventID,
   D3D11MarkerRegion::Set("!!!!RenderDoc Internal: Done replay");
 
   if(m_pDevice->GetDeviceRemovedReason() != S_OK)
-    SET_ERROR_RESULT(m_FatalError, ResultCode::ReplayDeviceLost, "Device lost during replay: %s",
+    SET_ERROR_RESULT(m_FatalError, ResultCode::DeviceLost, "Device lost during replay: %s",
                      ToStr(m_pDevice->GetDeviceRemovedReason()).c_str());
 }
 
@@ -2584,8 +2594,8 @@ void WrappedID3D11Device::CheckHRESULT(HRESULT hr)
   if(hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET ||
      hr == DXGI_ERROR_DEVICE_HUNG || hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR)
   {
-    SET_ERROR_RESULT(m_FatalError, ResultCode::ReplayDeviceLost,
-                     "Logging device lost fatal error for %s", ToStr(hr).c_str());
+    SET_ERROR_RESULT(m_FatalError, ResultCode::DeviceLost, "Logging device lost fatal error for %s",
+                     ToStr(hr).c_str());
   }
   else if(hr == E_OUTOFMEMORY)
   {
@@ -2595,7 +2605,7 @@ void WrappedID3D11Device::CheckHRESULT(HRESULT hr)
     }
     else
     {
-      SET_ERROR_RESULT(m_FatalError, ResultCode::ReplayOutOfMemory,
+      SET_ERROR_RESULT(m_FatalError, ResultCode::OutOfMemory,
                        "Logging out of memory fatal error for %s", ToStr(hr).c_str());
     }
   }

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -193,7 +193,6 @@ void WrappedVulkan::vkDestroyFramebuffer(VkDevice device, VkFramebuffer obj,
   if(obj == VK_NULL_HANDLE)
     return;
   VkFramebuffer unwrappedObj = Unwrap(obj);
-  m_ForcedReferences.removeOne(GetRecord(obj));
   if(IsReplayMode(m_State))
   {
     const VulkanCreationInfo::Framebuffer &rpinfo = m_CreationInfo.m_Framebuffer[GetResID(obj)];
@@ -216,7 +215,6 @@ void WrappedVulkan::vkDestroyRenderPass(VkDevice device, VkRenderPass obj,
   if(obj == VK_NULL_HANDLE)
     return;
   VkRenderPass unwrappedObj = Unwrap(obj);
-  m_ForcedReferences.removeOne(GetRecord(obj));
   if(IsReplayMode(m_State))
   {
     const VulkanCreationInfo::RenderPass &rpinfo = m_CreationInfo.m_RenderPass[GetResID(obj)];
@@ -263,7 +261,10 @@ void WrappedVulkan::vkDestroyBuffer(VkDevice device, VkBuffer buffer,
       GetResourceManager()->PreFreeMemory(record->resInfo->dedicatedMemory);
   }
 
-  m_ForcedReferences.removeOne(GetRecord(buffer));
+  {
+    SCOPED_LOCK(m_ForcedReferencesLock);
+    m_ForcedReferences.removeOne(GetRecord(buffer));
+  }
 
   if(IsReplayMode(m_State))
     m_CreationInfo.erase(GetResID(buffer));
@@ -343,6 +344,10 @@ void WrappedVulkan::vkFreeCommandBuffers(VkDevice device, VkCommandPool commandP
       continue;
 
     WrappedVkDispRes *wrapped = (WrappedVkDispRes *)GetWrapped(pCommandBuffers[c]);
+
+#if ENABLED(VERBOSE_PARTIAL_REPLAY)
+    RDCLOG("vkFreeCommandBuffers(%s)", ToStr(wrapped->id).c_str());
+#endif
 
     VkCommandBuffer unwrapped = wrapped->real.As<VkCommandBuffer>();
 
@@ -1526,6 +1531,14 @@ bool WrappedVulkan::Serialise_vkCreateQueryPool(SerialiserType &ser, VkDevice de
   {
     VkQueryPool pool = VK_NULL_HANDLE;
 
+    VkQueryPoolPerformanceCreateInfoKHR *perfInfo =
+        (VkQueryPoolPerformanceCreateInfoKHR *)FindNextStruct(
+            &CreateInfo, VK_STRUCTURE_TYPE_QUERY_POOL_PERFORMANCE_CREATE_INFO_KHR);
+    if(perfInfo)
+    {
+      perfInfo->queueFamilyIndex = m_QueueRemapping[perfInfo->queueFamilyIndex][0].family;
+    }
+
     VkResult ret = ObjDisp(device)->CreateQueryPool(Unwrap(device), &CreateInfo, NULL, &pool);
 
     if(ret != VK_SUCCESS)
@@ -2050,6 +2063,7 @@ static ObjData GetObjData(VkObjectType objType, uint64_t object)
     case VK_OBJECT_TYPE_BUFFER_COLLECTION_FUCHSIA:
     case VK_OBJECT_TYPE_MICROMAP_EXT:
     case VK_OBJECT_TYPE_OPTICAL_FLOW_SESSION_NV:
+    case VK_OBJECT_TYPE_SHADER_EXT:
     case VK_OBJECT_TYPE_UNKNOWN:
     case VK_OBJECT_TYPE_VIDEO_SESSION_KHR:
     case VK_OBJECT_TYPE_VIDEO_SESSION_PARAMETERS_KHR:

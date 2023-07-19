@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -544,7 +544,8 @@ ResultDetails CaptureFile::Convert(const rdcstr &filename, const rdcstr &filetyp
     delete reader;
     delete writer;
 
-    return ret;
+    if(ret != ResultCode::Succeeded)
+      return ret;
   }
 
   return RDResult();

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -2256,6 +2256,8 @@ bool WrappedOpenGL::Serialise_glMultiDrawArrays(SerialiserType &ser, GLenum mode
         // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
         // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
         // the first sub-draw in that range.
+
+        m_CurEventID += (uint32_t)drawcount;
       }
       else if(m_FirstEventID <= baseEventID)
       {
@@ -2264,30 +2266,31 @@ bool WrappedOpenGL::Serialise_glMultiDrawArrays(SerialiserType &ser, GLenum mode
         // works if we're replaying from the first multidraw to the nth (n less than drawcount)
         GL.glMultiDrawArrays(mode, first, count,
                              RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID));
+
+        m_CurEventID += (uint32_t)drawcount;
       }
       else
       {
-        // otherwise we do the 'hard' case, draw only one multidraw
-        // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
-        // a single draw.
+        // otherwise we do the 'hard' case, draw only some subset of multidraws
+        // we CAN be asked to do an arbitrary subset in the event of pixel history doing a replay
+        // from Draw N to somewhere after.
         //
         // We also need to use the original glMultiDraw command so that gl_DrawID is faithful. In
         // order to preserve the draw index we write a custom multidraw that specifies count == 0
         // for all previous draws.
-        RDCASSERT(m_LastEventID == m_FirstEventID);
+        uint32_t firstDrawIdx = m_FirstEventID - baseEventID - 1;
+        uint32_t lastDrawIdx = RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID) - 1;
 
-        uint32_t drawidx = (m_LastEventID - baseEventID - 1);
-
-        // zero out the count for all previous draws. This won't be used again so we can safely
-        // write over the serialised array.
+        // zero out the count for all previous draws up to the first. This won't be used again so we
+        // can safely write over the serialised array.
         GLsizei *modcount = (GLsizei *)count;
-        for(uint32_t d = 0; d < drawidx; d++)
+        for(uint32_t d = 0; d < firstDrawIdx; d++)
           modcount[d] = 0;
 
-        GL.glMultiDrawArrays(mode, first, count, drawidx + 1);
-      }
+        GL.glMultiDrawArrays(mode, first, count, lastDrawIdx + 1);
 
-      m_CurEventID += (uint32_t)drawcount;
+        m_CurEventID += (uint32_t)RDCMIN((uint32_t)drawcount, lastDrawIdx - firstDrawIdx);
+      }
     }
   }
 
@@ -2421,6 +2424,8 @@ bool WrappedOpenGL::Serialise_glMultiDrawElements(SerialiserType &ser, GLenum mo
         // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
         // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
         // the first sub-draw in that range.
+
+        m_CurEventID += (uint32_t)drawcount;
       }
       else if(m_FirstEventID <= baseEventID)
       {
@@ -2430,31 +2435,32 @@ bool WrappedOpenGL::Serialise_glMultiDrawElements(SerialiserType &ser, GLenum mo
         if(drawcount == 0 || count == 0 || Check_SafeDraw(true))
           GL.glMultiDrawElements(mode, count, type, inds.data(),
                                  RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID));
+
+        m_CurEventID += (uint32_t)drawcount;
       }
       else
       {
-        // otherwise we do the 'hard' case, draw only one multidraw
-        // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
-        // a single draw.
+        // otherwise we do the 'hard' case, draw only some subset of multidraws
+        // we CAN be asked to do an arbitrary subset in the event of pixel history doing a replay
+        // from Draw N to somewhere after.
         //
         // We also need to use the original glMultiDraw command so that gl_DrawID is faithful. In
         // order to preserve the draw index we write a custom multidraw that specifies count == 0
         // for all previous draws.
-        RDCASSERT(m_LastEventID == m_FirstEventID);
+        uint32_t firstDrawIdx = m_FirstEventID - baseEventID - 1;
+        uint32_t lastDrawIdx = RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID) - 1;
 
-        uint32_t drawidx = (m_LastEventID - baseEventID - 1);
-
-        // zero out the count for all previous draws. This won't be used again so we can safely
-        // write over the serialised array.
+        // zero out the count for all previous draws up to the first. This won't be used again so we
+        // can safely write over the serialised array.
         GLsizei *modcount = (GLsizei *)count;
-        for(uint32_t d = 0; d < drawidx; d++)
+        for(uint32_t d = 0; d < firstDrawIdx; d++)
           modcount[d] = 0;
 
         if(count == 0 || Check_SafeDraw(true))
-          GL.glMultiDrawElements(mode, count, type, inds.data(), drawidx + 1);
-      }
+          GL.glMultiDrawElements(mode, count, type, inds.data(), lastDrawIdx + 1);
 
-      m_CurEventID += (uint32_t)drawcount;
+        m_CurEventID += (uint32_t)RDCMIN((uint32_t)drawcount, lastDrawIdx - firstDrawIdx);
+      }
     }
   }
 
@@ -2591,6 +2597,8 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsBaseVertex(SerialiserType &ser,
         // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
         // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
         // the first sub-draw in that range.
+
+        m_CurEventID += (uint32_t)drawcount;
       }
       else if(m_FirstEventID <= baseEventID)
       {
@@ -2601,31 +2609,33 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsBaseVertex(SerialiserType &ser,
           GL.glMultiDrawElementsBaseVertex(mode, count, type, inds.data(),
                                            RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID),
                                            basevertex);
+
+        m_CurEventID += (uint32_t)drawcount;
       }
       else
       {
-        // otherwise we do the 'hard' case, draw only one multidraw
-        // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
-        // a single draw.
+        // otherwise we do the 'hard' case, draw only some subset of multidraws
+        // we CAN be asked to do an arbitrary subset in the event of pixel history doing a replay
+        // from Draw N to somewhere after.
         //
         // We also need to use the original glMultiDraw command so that gl_DrawID is faithful. In
         // order to preserve the draw index we write a custom multidraw that specifies count == 0
         // for all previous draws.
-        RDCASSERT(m_LastEventID == m_FirstEventID);
+        uint32_t firstDrawIdx = m_FirstEventID - baseEventID - 1;
+        uint32_t lastDrawIdx = RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID) - 1;
 
-        uint32_t drawidx = (m_LastEventID - baseEventID - 1);
-
-        // zero out the count for all previous draws. This won't be used again so we can safely
-        // write over the serialised array.
+        // zero out the count for all previous draws up to the first. This won't be used again so we
+        // can safely write over the serialised array.
         GLsizei *modcount = (GLsizei *)count;
-        for(uint32_t d = 0; d < drawidx; d++)
+        for(uint32_t d = 0; d < firstDrawIdx; d++)
           modcount[d] = 0;
 
         if(count == 0 || Check_SafeDraw(true))
-          GL.glMultiDrawElementsBaseVertex(mode, count, type, inds.data(), drawidx + 1, basevertex);
-      }
+          GL.glMultiDrawElementsBaseVertex(mode, count, type, inds.data(), lastDrawIdx + 1,
+                                           basevertex);
 
-      m_CurEventID += (uint32_t)drawcount;
+        m_CurEventID += (uint32_t)RDCMIN((uint32_t)drawcount, lastDrawIdx - firstDrawIdx);
+      }
     }
   }
 
@@ -2779,6 +2789,8 @@ bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirect(SerialiserType &ser, GLe
         // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
         // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
         // the first sub-draw in that range.
+
+        m_CurEventID += drawcount;
       }
       else if(m_FirstEventID <= baseEventID)
       {
@@ -2789,36 +2801,38 @@ bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirect(SerialiserType &ser, GLe
           GL.glMultiDrawArraysIndirect(mode, (const void *)offset,
                                        RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID),
                                        stride);
+
+        m_CurEventID += drawcount;
       }
       else
       {
-        // otherwise we do the 'hard' case, draw only one multidraw
-        // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
-        // a single draw.
+        // otherwise we do the 'hard' case, draw only some subset of multidraws
+        // we CAN be asked to do an arbitrary subset in the event of pixel history doing a replay
+        // from Draw N to somewhere after.
         //
         // We also need to use the original glMultiDraw command so that gl_DrawID is faithful. In
         // order to preserve the draw index we write a custom multidraw that specifies count == 0
         // for all previous draws.
-        RDCASSERT(m_LastEventID == m_FirstEventID);
+        uint32_t firstDrawIdx = m_FirstEventID - baseEventID - 1;
+        uint32_t lastDrawIdx = RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID) - 1;
 
-        uint32_t drawidx = (m_LastEventID - baseEventID - 1);
-
-        DrawArraysIndirectCommand params = {};
+        rdcarray<DrawArraysIndirectCommand> params;
+        params.resize(lastDrawIdx - firstDrawIdx + 1);
 
         GLintptr offs = (GLintptr)offset;
         if(stride != 0)
-          offs += stride * drawidx;
+          offs += stride * firstDrawIdx;
         else
-          offs += sizeof(params) * drawidx;
+          offs += sizeof(DrawArraysIndirectCommand) * firstDrawIdx;
 
-        GL.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+        GL.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, params.byteSize(), params.data());
 
         {
           GLint prevBuf = 0;
           GL.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, &prevBuf);
 
           // get an indirect buffer big enough for all the draws
-          GLsizeiptr bufLength = sizeof(params) * (drawidx + 1);
+          GLsizeiptr bufLength = sizeof(DrawArraysIndirectCommand) * (lastDrawIdx + 1);
           BindIndirectBuffer(bufLength);
 
           DrawArraysIndirectCommand *cmds = (DrawArraysIndirectCommand *)GL.glMapBufferRange(
@@ -2826,24 +2840,24 @@ bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirect(SerialiserType &ser, GLe
               GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
 
           // zero out all prior draws
-          for(uint32_t d = 0; d < drawidx; d++)
+          for(uint32_t d = 0; d < firstDrawIdx; d++)
             memset(cmds + d, 0, sizeof(DrawArraysIndirectCommand));
 
           // write the actual draw's parameters
-          memcpy(cmds + drawidx, &params, sizeof(params));
+          memcpy(cmds + firstDrawIdx, params.data(), params.byteSize());
 
           GL.glUnmapBuffer(eGL_DRAW_INDIRECT_BUFFER);
 
           // the offset is 0 because it's referring to our custom buffer, stride is 0 because we
           // tightly pack.
           if(Check_SafeDraw(false))
-            GL.glMultiDrawArraysIndirect(mode, (const void *)0, drawidx + 1, 0);
+            GL.glMultiDrawArraysIndirect(mode, (const void *)0, lastDrawIdx + 1, 0);
 
           GL.glBindBuffer(eGL_DRAW_INDIRECT_BUFFER, prevBuf);
         }
-      }
 
-      m_CurEventID += drawcount;
+        m_CurEventID += (uint32_t)RDCMIN((uint32_t)drawcount, lastDrawIdx - firstDrawIdx);
+      }
     }
   }
 
@@ -3005,6 +3019,8 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirect(SerialiserType &ser, G
         // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
         // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
         // the first sub-draw in that range.
+
+        m_CurEventID += drawcount;
       }
       else if(m_FirstEventID <= baseEventID)
       {
@@ -3015,36 +3031,38 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirect(SerialiserType &ser, G
           GL.glMultiDrawElementsIndirect(mode, type, (const void *)offset,
                                          RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID),
                                          stride);
+
+        m_CurEventID += drawcount;
       }
       else
       {
-        // otherwise we do the 'hard' case, draw only one multidraw
-        // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
-        // a single draw.
+        // otherwise we do the 'hard' case, draw only some subset of multidraws
+        // we CAN be asked to do an arbitrary subset in the event of pixel history doing a replay
+        // from Draw N to somewhere after.
         //
         // We also need to use the original glMultiDraw command so that gl_DrawID is faithful. In
         // order to preserve the draw index we write a custom multidraw that specifies count == 0
         // for all previous draws.
-        RDCASSERT(m_LastEventID == m_FirstEventID);
+        uint32_t firstDrawIdx = m_FirstEventID - baseEventID - 1;
+        uint32_t lastDrawIdx = RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID) - 1;
 
-        uint32_t drawidx = (m_LastEventID - baseEventID - 1);
-
-        DrawElementsIndirectCommand params = {};
+        rdcarray<DrawElementsIndirectCommand> params;
+        params.resize(lastDrawIdx - firstDrawIdx + 1);
 
         GLintptr offs = (GLintptr)offset;
         if(stride != 0)
-          offs += stride * drawidx;
+          offs += stride * firstDrawIdx;
         else
-          offs += sizeof(params) * drawidx;
+          offs += sizeof(DrawElementsIndirectCommand) * firstDrawIdx;
 
-        GL.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+        GL.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, params.byteSize(), params.data());
 
         {
           GLint prevBuf = 0;
           GL.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, &prevBuf);
 
           // get an indirect buffer big enough for all the draws
-          GLsizeiptr bufLength = sizeof(params) * (drawidx + 1);
+          GLsizeiptr bufLength = sizeof(DrawElementsIndirectCommand) * (lastDrawIdx + 1);
           BindIndirectBuffer(bufLength);
 
           DrawElementsIndirectCommand *cmds = (DrawElementsIndirectCommand *)GL.glMapBufferRange(
@@ -3052,24 +3070,24 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirect(SerialiserType &ser, G
               GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
 
           // zero out all prior draws
-          for(uint32_t d = 0; d < drawidx; d++)
+          for(uint32_t d = 0; d < firstDrawIdx; d++)
             memset(cmds + d, 0, sizeof(DrawElementsIndirectCommand));
 
           // write the actual draw's parameters
-          memcpy(cmds + drawidx, &params, sizeof(params));
+          memcpy(cmds + firstDrawIdx, params.data(), params.byteSize());
 
           GL.glUnmapBuffer(eGL_DRAW_INDIRECT_BUFFER);
 
           // the offset is 0 because it's referring to our custom buffer, stride is 0 because we
           // tightly pack.
           if(Check_SafeDraw(true))
-            GL.glMultiDrawElementsIndirect(mode, type, (const void *)0, drawidx + 1, 0);
+            GL.glMultiDrawElementsIndirect(mode, type, (const void *)0, lastDrawIdx + 1, 0);
 
           GL.glBindBuffer(eGL_DRAW_INDIRECT_BUFFER, prevBuf);
         }
-      }
 
-      m_CurEventID += drawcount;
+        m_CurEventID += (uint32_t)RDCMIN((uint32_t)drawcount, lastDrawIdx - firstDrawIdx);
+      }
     }
   }
 
@@ -3231,6 +3249,8 @@ bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirectCount(SerialiserType &ser
         // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
         // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
         // the first sub-draw in that range.
+
+        m_CurEventID += realdrawcount;
       }
       else if(m_FirstEventID <= baseEventID)
       {
@@ -3241,36 +3261,38 @@ bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirectCount(SerialiserType &ser
           GL.glMultiDrawArraysIndirect(mode, (const void *)offset,
                                        RDCMIN((uint32_t)realdrawcount, m_LastEventID - baseEventID),
                                        stride);
+
+        m_CurEventID += realdrawcount;
       }
       else
       {
-        // otherwise we do the 'hard' case, draw only one multidraw
-        // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
-        // a single draw.
+        // otherwise we do the 'hard' case, draw only some subset of multidraws
+        // we CAN be asked to do an arbitrary subset in the event of pixel history doing a replay
+        // from Draw N to somewhere after.
         //
         // We also need to use the original glMultiDraw command so that gl_DrawID is faithful. In
         // order to preserve the draw index we write a custom multidraw that specifies count == 0
         // for all previous draws.
-        RDCASSERT(m_LastEventID == m_FirstEventID);
+        uint32_t firstDrawIdx = m_FirstEventID - baseEventID - 1;
+        uint32_t lastDrawIdx = RDCMIN((uint32_t)realdrawcount, m_LastEventID - baseEventID) - 1;
 
-        uint32_t drawidx = (m_LastEventID - baseEventID - 1);
-
-        DrawArraysIndirectCommand params = {};
+        rdcarray<DrawArraysIndirectCommand> params;
+        params.resize(lastDrawIdx - firstDrawIdx + 1);
 
         GLintptr offs = (GLintptr)offset;
         if(stride != 0)
-          offs += stride * drawidx;
+          offs += stride * firstDrawIdx;
         else
-          offs += sizeof(params) * drawidx;
+          offs += sizeof(DrawArraysIndirectCommand) * firstDrawIdx;
 
-        GL.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+        GL.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, params.byteSize(), params.data());
 
         {
           GLint prevBuf = 0;
           GL.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, &prevBuf);
 
           // get an indirect buffer big enough for all the draws
-          GLsizeiptr bufLength = sizeof(params) * (drawidx + 1);
+          GLsizeiptr bufLength = sizeof(DrawArraysIndirectCommand) * (lastDrawIdx + 1);
           BindIndirectBuffer(bufLength);
 
           DrawArraysIndirectCommand *cmds = (DrawArraysIndirectCommand *)GL.glMapBufferRange(
@@ -3278,24 +3300,24 @@ bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirectCount(SerialiserType &ser
               GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
 
           // zero out all prior draws
-          for(uint32_t d = 0; d < drawidx; d++)
+          for(uint32_t d = 0; d < firstDrawIdx; d++)
             memset(cmds + d, 0, sizeof(DrawArraysIndirectCommand));
 
           // write the actual draw's parameters
-          memcpy(cmds + drawidx, &params, sizeof(params));
+          memcpy(cmds + firstDrawIdx, params.data(), params.byteSize());
 
           GL.glUnmapBuffer(eGL_DRAW_INDIRECT_BUFFER);
 
           // the offset is 0 because it's referring to our custom buffer, stride is 0 because we
           // tightly pack.
           if(Check_SafeDraw(false))
-            GL.glMultiDrawArraysIndirect(mode, (const void *)0, drawidx + 1, 0);
+            GL.glMultiDrawArraysIndirect(mode, (const void *)0, lastDrawIdx + 1, 0);
 
           GL.glBindBuffer(eGL_DRAW_INDIRECT_BUFFER, prevBuf);
         }
-      }
 
-      m_CurEventID += realdrawcount;
+        m_CurEventID += (uint32_t)RDCMIN((uint32_t)realdrawcount, lastDrawIdx - firstDrawIdx);
+      }
     }
   }
 
@@ -3466,6 +3488,8 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirectCount(SerialiserType &s
         // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
         // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
         // the first sub-draw in that range.
+
+        m_CurEventID += realdrawcount;
       }
       else if(m_FirstEventID <= baseEventID)
       {
@@ -3476,36 +3500,38 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirectCount(SerialiserType &s
           GL.glMultiDrawElementsIndirect(
               mode, type, (const void *)offset,
               RDCMIN((uint32_t)realdrawcount, m_LastEventID - baseEventID), stride);
+
+        m_CurEventID += realdrawcount;
       }
       else
       {
-        // otherwise we do the 'hard' case, draw only one multidraw
-        // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
-        // a single draw.
+        // otherwise we do the 'hard' case, draw only some subset of multidraws
+        // we CAN be asked to do an arbitrary subset in the event of pixel history doing a replay
+        // from Draw N to somewhere after.
         //
         // We also need to use the original glMultiDraw command so that gl_DrawID is faithful. In
         // order to preserve the draw index we write a custom multidraw that specifies count == 0
         // for all previous draws.
-        RDCASSERT(m_LastEventID == m_FirstEventID);
+        uint32_t firstDrawIdx = m_FirstEventID - baseEventID - 1;
+        uint32_t lastDrawIdx = RDCMIN((uint32_t)realdrawcount, m_LastEventID - baseEventID) - 1;
 
-        uint32_t drawidx = (m_LastEventID - baseEventID - 1);
-
-        DrawElementsIndirectCommand params = {};
+        rdcarray<DrawElementsIndirectCommand> params;
+        params.resize(lastDrawIdx - firstDrawIdx + 1);
 
         GLintptr offs = (GLintptr)offset;
         if(stride != 0)
-          offs += stride * drawidx;
+          offs += stride * firstDrawIdx;
         else
-          offs += sizeof(params) * drawidx;
+          offs += sizeof(DrawElementsIndirectCommand) * firstDrawIdx;
 
-        GL.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+        GL.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, params.byteSize(), params.data());
 
         {
           GLint prevBuf = 0;
           GL.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, &prevBuf);
 
           // get an indirect buffer big enough for all the draws
-          GLsizeiptr bufLength = sizeof(params) * (drawidx + 1);
+          GLsizeiptr bufLength = sizeof(DrawElementsIndirectCommand) * (lastDrawIdx + 1);
           BindIndirectBuffer(bufLength);
 
           DrawElementsIndirectCommand *cmds = (DrawElementsIndirectCommand *)GL.glMapBufferRange(
@@ -3513,24 +3539,24 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirectCount(SerialiserType &s
               GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
 
           // zero out all prior draws
-          for(uint32_t d = 0; d < drawidx; d++)
+          for(uint32_t d = 0; d < firstDrawIdx; d++)
             memset(cmds + d, 0, sizeof(DrawElementsIndirectCommand));
 
           // write the actual draw's parameters
-          memcpy(cmds + drawidx, &params, sizeof(params));
+          memcpy(cmds + firstDrawIdx, params.data(), params.byteSize());
 
           GL.glUnmapBuffer(eGL_DRAW_INDIRECT_BUFFER);
 
           // the offset is 0 because it's referring to our custom buffer, stride is 0 because we
           // tightly pack.
           if(maxdrawcount == 0 || Check_SafeDraw(true))
-            GL.glMultiDrawElementsIndirect(mode, type, (const void *)0, drawidx + 1, 0);
+            GL.glMultiDrawElementsIndirect(mode, type, (const void *)0, lastDrawIdx + 1, 0);
 
           GL.glBindBuffer(eGL_DRAW_INDIRECT_BUFFER, prevBuf);
         }
-      }
 
-      m_CurEventID += realdrawcount;
+        m_CurEventID += (uint32_t)RDCMIN((uint32_t)realdrawcount, lastDrawIdx - firstDrawIdx);
+      }
     }
   }
 
@@ -4139,7 +4165,8 @@ bool WrappedOpenGL::Serialise_glClearNamedBufferDataEXT(SerialiserType &ser, GLu
       case eGL_UNSIGNED_BYTE:
       case eGL_BYTE: s *= 1; break;
       case eGL_UNSIGNED_SHORT:
-      case eGL_SHORT: s *= 2; break;
+      case eGL_SHORT:
+      case eGL_HALF_FLOAT: s *= 2; break;
       case eGL_UNSIGNED_INT:
       case eGL_INT:
       case eGL_FLOAT: s *= 4; break;
@@ -4292,7 +4319,8 @@ bool WrappedOpenGL::Serialise_glClearNamedBufferSubDataEXT(SerialiserType &ser, 
       case eGL_UNSIGNED_BYTE:
       case eGL_BYTE: s *= 1; break;
       case eGL_UNSIGNED_SHORT:
-      case eGL_SHORT: s *= 2; break;
+      case eGL_SHORT:
+      case eGL_HALF_FLOAT: s *= 2; break;
       case eGL_UNSIGNED_INT:
       case eGL_INT:
       case eGL_FLOAT: s *= 4; break;
@@ -4494,15 +4522,20 @@ bool WrappedOpenGL::Serialise_glClear(SerialiserType &ser, GLbitfield mask)
 
         for(int i = numCols - 1; i >= 0; --i)
         {
-          ResourceId res_id =
-              ExtractFBOAttachment(eGL_DRAW_FRAMEBUFFER, GLenum(eGL_COLOR_ATTACHMENT0 + i));
+          GLenum dbEnum = eGL_NONE;
+          GL.glGetIntegerv(GLenum(eGL_DRAW_BUFFER0 + i), (GLint *)&dbEnum);
+
+          if(dbEnum == eGL_NONE)
+            continue;
+
+          ResourceId res_id = ExtractFBOAttachment(eGL_DRAW_FRAMEBUFFER, dbEnum);
 
           if(res_id != ResourceId())
           {
             m_ResourceUses[res_id].push_back(EventUsage(m_CurEventID, ResourceUsage::Clear));
 
             dstId = res_id;
-            attach = GLenum(eGL_COLOR_ATTACHMENT0 + i);
+            attach = dbEnum;
           }
         }
       }
@@ -4589,7 +4622,8 @@ bool WrappedOpenGL::Serialise_glClearTexImage(SerialiserType &ser, GLuint textur
       case eGL_UNSIGNED_BYTE:
       case eGL_BYTE: s *= 1; break;
       case eGL_UNSIGNED_SHORT:
-      case eGL_SHORT: s *= 2; break;
+      case eGL_SHORT:
+      case eGL_HALF_FLOAT: s *= 2; break;
       case eGL_UNSIGNED_INT:
       case eGL_INT:
       case eGL_FLOAT: s *= 4; break;
@@ -4736,7 +4770,8 @@ bool WrappedOpenGL::Serialise_glClearTexSubImage(SerialiserType &ser, GLuint tex
       case eGL_UNSIGNED_BYTE:
       case eGL_BYTE: s *= 1; break;
       case eGL_UNSIGNED_SHORT:
-      case eGL_SHORT: s *= 2; break;
+      case eGL_SHORT:
+      case eGL_HALF_FLOAT: s *= 2; break;
       case eGL_UNSIGNED_INT:
       case eGL_INT:
       case eGL_FLOAT: s *= 4; break;

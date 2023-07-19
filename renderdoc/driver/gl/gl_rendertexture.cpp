@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -341,9 +341,14 @@ bool GLReplay::RenderTextureInternal(TextureDisplay cfg, TexDisplayFlags flags)
       }
       cfg.rangeMin *= rangeScale;
       cfg.rangeMax *= rangeScale;
+
+      if(displayFormat == eGL_STENCIL_INDEX8)
+        cfg.red = true;
     }
     else
+    {
       dsTexMode = eGL_DEPTH_COMPONENT;
+    }
   }
   else
   {

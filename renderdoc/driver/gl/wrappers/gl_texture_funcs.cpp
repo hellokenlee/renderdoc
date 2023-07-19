@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1365,12 +1365,19 @@ void WrappedOpenGL::glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint s
     if(IsGLES)
     {
       TextureData &srcData = m_Textures[srcrecord->GetResourceID()];
+      TextureData &dstData = m_Textures[dstrecord->GetResourceID()];
 
-      // if we have source compressed data to copy (for uncompressed textures, we won't)
-      if(srcData.compressedData.find(srcLevel) != srcData.compressedData.end())
+      bool dstIsCompressed = IsCompressedFormat(dstData.internalFormat);
+
+      // only need dst's compressedData
+      if(dstIsCompressed)
       {
-        TextureData &dstData = m_Textures[dstrecord->GetResourceID()];
-
+        bool srcIsCompressed = IsCompressedFormat(srcData.internalFormat);
+        GLenum srcFmt = srcIsCompressed ? eGL_NONE : GetBaseFormat(srcData.internalFormat);
+        GLenum srcType = srcIsCompressed ? eGL_NONE : GetDataType(srcData.internalFormat);
+        rdcfixedarray<uint32_t, 3> srcBlockSize =
+            srcIsCompressed ? GetCompressedBlockSize(srcData.internalFormat)
+                            : rdcfixedarray<uint32_t, 3>{1u, 1u, 1u};
         GLsizei srcLevelWidth = RDCMAX(1, srcData.width >> srcLevel);
         GLsizei srcLevelHeight = (srcData.curType != eGL_TEXTURE_1D_ARRAY)
                                      ? RDCMAX(1, srcData.height >> srcLevel)
@@ -1379,7 +1386,13 @@ void WrappedOpenGL::glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint s
                                  srcData.curType != eGL_TEXTURE_CUBE_MAP_ARRAY)
                                     ? RDCMAX(1, srcData.depth >> srcLevel)
                                     : srcData.depth;
+        size_t srcSize =
+            srcIsCompressed
+                ? GetCompressedByteSize(srcLevelWidth, srcLevelHeight, srcLevelDepth,
+                                        srcData.internalFormat)
+                : GetByteSize(srcLevelWidth, srcLevelHeight, srcLevelDepth, srcFmt, srcType);
 
+        rdcfixedarray<uint32_t, 3> dstBlockSize = GetCompressedBlockSize(dstData.internalFormat);
         GLsizei dstLevelWidth = RDCMAX(1, dstData.width >> dstLevel);
         GLsizei dstLevelHeight = (dstData.curType != eGL_TEXTURE_1D_ARRAY)
                                      ? RDCMAX(1, dstData.height >> dstLevel)
@@ -1388,55 +1401,130 @@ void WrappedOpenGL::glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint s
                                  dstData.curType != eGL_TEXTURE_CUBE_MAP_ARRAY)
                                     ? RDCMAX(1, dstData.depth >> dstLevel)
                                     : dstData.depth;
-        if(srcX == 0 && srcY == 0 && srcZ == 0 && dstX == 0 && dstY == 0 && dstZ == 0 &&
-           srcLevelWidth == dstLevelWidth && srcLevelHeight == dstLevelHeight &&
-           srcLevelDepth == dstLevelDepth)
+        size_t dstSize = GetCompressedByteSize(dstLevelWidth, dstLevelHeight, dstLevelDepth,
+                                               dstData.internalFormat);
+
+        bytebuf *srcCdPtr = NULL;
+        bytebuf tempCd;
+        // if we have source compressed data to copy
+        if(srcData.compressedData.find(srcLevel) != srcData.compressedData.end())
         {
-          dstData.compressedData[dstLevel] = srcData.compressedData[srcLevel];
+          srcCdPtr = &srcData.compressedData[srcLevel];
         }
-        else
+        else if(!srcIsCompressed)
         {
-          rdcfixedarray<uint32_t, 3> srcBlockSize = GetCompressedBlockSize(srcData.internalFormat);
-          rdcfixedarray<uint32_t, 3> dstBlockSize = GetCompressedBlockSize(dstData.internalFormat);
-
-          size_t srcSliceSize = GetCompressedByteSize(srcLevelWidth, srcLevelHeight,
-                                                      srcBlockSize[2], srcData.internalFormat);
-          size_t dstSliceSize = GetCompressedByteSize(dstLevelWidth, dstLevelHeight,
-                                                      dstBlockSize[2], dstData.internalFormat);
-
-          RDCASSERT(srcWidth % srcBlockSize[0] == 0);
-          RDCASSERT(srcWidth % dstBlockSize[0] == 0);
-          RDCASSERT(srcHeight % srcBlockSize[1] == 0);
-          RDCASSERT(srcHeight % dstBlockSize[1] == 0);
-          RDCASSERT(srcDepth % srcBlockSize[2] == 0);
-          RDCASSERT(srcDepth % dstBlockSize[2] == 0);
-          for(size_t z = 0; z < (size_t)srcDepth; z += srcBlockSize[2])
+          if(srcData.curType == eGL_TEXTURE_2D || srcData.curType == eGL_TEXTURE_2D_ARRAY)
           {
-            size_t srcLineSize =
-                GetCompressedByteSize(srcLevelWidth, (GLsizei)srcBlockSize[1],
-                                      (GLsizei)srcBlockSize[2], srcData.internalFormat);
-            size_t dstLineSize =
+            // try reading back without existing compressedData
+            RDCASSERT(!srcIsCompressed);
+
+            tempCd.resize(srcSize);
+            srcCdPtr = &tempCd;
+
+            GLuint packbuf = 0;
+            GL.glGetIntegerv(eGL_PIXEL_PACK_BUFFER_BINDING, (GLint *)&packbuf);
+            PixelPackState pack;
+            pack.Fetch(false);
+
+            GLuint prevTex = 0;
+            GL.glGetIntegerv(TextureBinding(srcData.curType), (GLint *)&prevTex);
+
+            GLenum oldActive = eGL_TEXTURE0;
+            GL.glGetIntegerv(eGL_ACTIVE_TEXTURE, (GLint *)&oldActive);
+            GL.glActiveTexture(eGL_TEXTURE0);
+
+            GL.glBindBuffer(eGL_PIXEL_PACK_BUFFER, 0);
+            ResetPixelPackState(false, 1);
+
+            GL.glBindTexture(srcData.curType, srcName);
+            GL.glGetTexImage(srcData.curType, srcLevel, srcFmt, srcType, tempCd.data());
+
+            GL.glBindTexture(srcData.curType, prevTex);
+            GL.glActiveTexture(oldActive);
+
+            if(packbuf)
+              GL.glBindBuffer(eGL_PIXEL_PACK_BUFFER, packbuf);
+            pack.Apply(false);
+          }
+          else
+          {
+            RDCLOG("Unsupported format %d to copy from in glCopyImageSubData", srcData.curType);
+          }
+        }
+        if(srcCdPtr)
+        {
+          RDCASSERT(srcWidth % srcBlockSize[0] == 0);
+          RDCASSERT(srcHeight % srcBlockSize[1] == 0);
+          RDCASSERT(srcDepth % srcBlockSize[2] == 0);
+          RDCASSERT(srcX % srcBlockSize[0] == 0);
+          RDCASSERT(srcY % srcBlockSize[1] == 0);
+          RDCASSERT(srcZ % srcBlockSize[2] == 0);
+          RDCASSERT(dstX % dstBlockSize[0] == 0);
+          RDCASSERT(dstY % dstBlockSize[1] == 0);
+          RDCASSERT(dstZ % dstBlockSize[2] == 0);
+          // copy full texture rather than subregion
+          if(srcX == 0 && srcY == 0 && srcZ == 0 && dstX == 0 && dstY == 0 && dstZ == 0 &&
+             srcLevelWidth == srcWidth && srcLevelHeight == srcHeight && srcLevelDepth == srcDepth &&
+             // equal dimension after normalising for blocks/texels
+             (srcLevelWidth / srcBlockSize[0] == dstLevelWidth / dstBlockSize[0]) &&
+             (srcLevelHeight / srcBlockSize[1] == dstLevelHeight / dstBlockSize[1]) &&
+             (srcLevelDepth / srcBlockSize[2] == dstLevelDepth / dstBlockSize[2]) &&
+             // compatible size across formats
+             srcSize == dstSize)
+          {
+            // fast path when perform full copy
+            dstData.compressedData[dstLevel] = *srcCdPtr;
+          }
+          else
+          {
+            bytebuf &dstCd = dstData.compressedData[dstLevel];
+
+            size_t srcSliceSize =
+                srcIsCompressed
+                    ? GetCompressedByteSize(srcLevelWidth, srcLevelHeight, srcBlockSize[2],
+                                            srcData.internalFormat)
+                    : GetByteSize(srcLevelWidth, srcLevelHeight, srcBlockSize[2], srcFmt, srcType);
+            size_t dstSliceSize = GetCompressedByteSize(dstLevelWidth, dstLevelHeight,
+                                                        dstBlockSize[2], dstData.internalFormat);
+
+            size_t srcRowSize =
+                srcIsCompressed
+                    ? GetCompressedByteSize(srcLevelWidth, (GLsizei)srcBlockSize[1],
+                                            (GLsizei)srcBlockSize[2], srcData.internalFormat)
+                    : GetByteSize(srcLevelWidth, srcBlockSize[1], srcBlockSize[2], srcFmt, srcType);
+            size_t dstRowSize =
                 GetCompressedByteSize(dstLevelWidth, (GLsizei)dstBlockSize[1],
                                       (GLsizei)dstBlockSize[2], dstData.internalFormat);
-            size_t srcOffset = srcSliceSize * ((srcZ + z) / (GLsizei)srcBlockSize[2]) +
-                               srcLineSize * (srcY / (GLsizei)srcBlockSize[1]);
-            srcOffset += GetCompressedByteSize(srcX, (GLsizei)srcBlockSize[1],
-                                               (GLsizei)srcBlockSize[2], srcData.internalFormat);
-            size_t dstOffset = dstSliceSize * ((dstZ + z) / (GLsizei)dstBlockSize[2]) +
-                               dstLineSize * (dstY / (GLsizei)dstBlockSize[1]);
-            dstOffset += GetCompressedByteSize(dstX, (GLsizei)dstBlockSize[1],
-                                               (GLsizei)dstBlockSize[2], dstData.internalFormat);
-            size_t blockSize = GetCompressedByteSize(
-                srcWidth, (GLsizei)dstBlockSize[1], (GLsizei)dstBlockSize[2], srcData.internalFormat);
-            bytebuf &srcCd = srcData.compressedData[srcLevel];
-            bytebuf &dstCd = dstData.compressedData[dstLevel];
-            for(size_t y = 0; y < (size_t)srcHeight; y += srcBlockSize[1])
+
+            size_t srcStartOffset =
+                srcIsCompressed
+                    ? GetCompressedByteSize(srcX, (GLsizei)srcBlockSize[1],
+                                            (GLsizei)srcBlockSize[2], srcData.internalFormat)
+                    : GetByteSize(srcX, srcBlockSize[1], srcBlockSize[2], srcFmt, srcType);
+            size_t dstStartOffset = GetCompressedByteSize(
+                dstX, (GLsizei)dstBlockSize[1], (GLsizei)dstBlockSize[2], dstData.internalFormat);
+
+            size_t blockSize =
+                srcIsCompressed
+                    ? GetCompressedByteSize(srcWidth, (GLsizei)srcBlockSize[1],
+                                            (GLsizei)srcBlockSize[2], srcData.internalFormat)
+                    : GetByteSize(srcWidth, srcBlockSize[1], srcBlockSize[2], srcFmt, srcType);
+
+            for(size_t z = 0; z < (size_t)srcDepth; z += srcBlockSize[2])
             {
-              if(dstCd.size() < dstOffset + blockSize || srcCd.size() < srcOffset + blockSize)
-                break;
-              memcpy(dstCd.data() + dstOffset, srcCd.data() + srcOffset, blockSize);
-              srcOffset += srcLineSize;
-              dstOffset += dstLineSize;
+              size_t srcOffset = srcSliceSize * ((srcZ + z) / (GLsizei)srcBlockSize[2]) +
+                                 srcRowSize * (srcY / (GLsizei)srcBlockSize[1]) + srcStartOffset;
+              size_t dstOffset = dstSliceSize * ((dstZ + z) / (GLsizei)dstBlockSize[2]) +
+                                 dstRowSize * (dstY / (GLsizei)dstBlockSize[1]) + dstStartOffset;
+              for(size_t y = 0; y < (size_t)srcHeight; y += srcBlockSize[1])
+              {
+                RDCASSERT(srcCdPtr->size() >= srcOffset + blockSize);
+                if(dstCd.size() < dstOffset + blockSize)
+                  dstCd.resize(dstOffset + blockSize);
+                memcpy(dstCd.data() + dstOffset, srcCdPtr->data() + srcOffset, blockSize);
+                srcOffset += srcRowSize;
+                dstOffset += dstRowSize;
+              }
             }
           }
         }
@@ -2672,11 +2760,14 @@ bool WrappedOpenGL::Serialise_glTextureImage1DEXT(SerialiserType &ser, GLuint te
     // or just size the texture to be filled with data later (buf=NULL)
     GLuint unpackbuf = 0;
     GL.glGetIntegerv(eGL_PIXEL_UNPACK_BUFFER_BINDING, (GLint *)&unpackbuf);
-    GL.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
-
     GLint align = 1;
     GL.glGetIntegerv(eGL_UNPACK_ALIGNMENT, &align);
-    GL.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+
+    if(IsLoading(m_State) && m_CurEventID == 0)
+    {
+      GL.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
+      GL.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+    }
 
     GL.glTextureImage1DEXT(texture.name, target, level, internalformat, width, border, format, type,
                            pixels);
@@ -2740,7 +2831,17 @@ void WrappedOpenGL::Common_glTextureImage1DEXT(ResourceId texId, GLenum target, 
       Serialise_glTextureImage1DEXT(ser, record->Resource.name, target, level, internalformat,
                                     width, border, format, type, fromunpackbuf ? NULL : pixels);
 
-      record->AddChunk(scope.Get());
+      Chunk *chunk = scope.Get();
+      record->AddChunk(chunk);
+
+      // if we're actively capturing this may be a creation but it may be a re-initialise. Insert
+      // the chunk here as well to ensure consistent replay
+      if(IsActiveCapturing(m_State))
+      {
+        GetContextRecord()->AddChunk(chunk->Duplicate());
+        GetResourceManager()->MarkResourceFrameReferenced(record->GetResourceID(),
+                                                          eFrameRef_PartialWrite);
+      }
 
       // illegal to re-type textures
       record->VerifyDataType(target);
@@ -2900,11 +3001,14 @@ bool WrappedOpenGL::Serialise_glTextureImage2DEXT(SerialiserType &ser, GLuint te
     // or just size the texture to be filled with data later (buf=NULL)
     GLuint unpackbuf = 0;
     GL.glGetIntegerv(eGL_PIXEL_UNPACK_BUFFER_BINDING, (GLint *)&unpackbuf);
-    GL.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
-
     GLint align = 1;
     GL.glGetIntegerv(eGL_UNPACK_ALIGNMENT, &align);
-    GL.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+
+    if(IsLoading(m_State) && m_CurEventID == 0)
+    {
+      GL.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
+      GL.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+    }
 
     if(TextureBinding(target) == eGL_TEXTURE_BINDING_CUBE_MAP &&
        mipsValid != m_Textures[liveId].mipsValid)
@@ -2992,7 +3096,17 @@ void WrappedOpenGL::Common_glTextureImage2DEXT(ResourceId texId, GLenum target, 
       Serialise_glTextureImage2DEXT(ser, record->Resource.name, target, level, internalformat, width,
                                     height, border, format, type, fromunpackbuf ? NULL : pixels);
 
-      record->AddChunk(scope.Get());
+      Chunk *chunk = scope.Get();
+      record->AddChunk(chunk);
+
+      // if we're actively capturing this may be a creation but it may be a re-initialise. Insert
+      // the chunk here as well to ensure consistent replay
+      if(IsActiveCapturing(m_State))
+      {
+        GetContextRecord()->AddChunk(chunk->Duplicate());
+        GetResourceManager()->MarkResourceFrameReferenced(record->GetResourceID(),
+                                                          eFrameRef_PartialWrite);
+      }
 
       // illegal to re-type textures
       record->VerifyDataType(target);
@@ -3154,11 +3268,14 @@ bool WrappedOpenGL::Serialise_glTextureImage3DEXT(SerialiserType &ser, GLuint te
     // or just size the texture to be filled with data later (buf=NULL)
     GLuint unpackbuf = 0;
     GL.glGetIntegerv(eGL_PIXEL_UNPACK_BUFFER_BINDING, (GLint *)&unpackbuf);
-    GL.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
-
     GLint align = 1;
     GL.glGetIntegerv(eGL_UNPACK_ALIGNMENT, &align);
-    GL.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+
+    if(IsLoading(m_State) && m_CurEventID == 0)
+    {
+      GL.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
+      GL.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+    }
 
     GL.glTextureImage3DEXT(texture.name, target, level, internalformat, width, height, depth,
                            border, format, type, pixels);
@@ -3226,7 +3343,17 @@ void WrappedOpenGL::Common_glTextureImage3DEXT(ResourceId texId, GLenum target, 
                                     width, height, depth, border, format, type,
                                     fromunpackbuf ? NULL : pixels);
 
-      record->AddChunk(scope.Get());
+      Chunk *chunk = scope.Get();
+      record->AddChunk(chunk);
+
+      // if we're actively capturing this may be a creation but it may be a re-initialise. Insert
+      // the chunk here as well to ensure consistent replay
+      if(IsActiveCapturing(m_State))
+      {
+        GetContextRecord()->AddChunk(chunk->Duplicate());
+        GetResourceManager()->MarkResourceFrameReferenced(record->GetResourceID(),
+                                                          eFrameRef_PartialWrite);
+      }
 
       // illegal to re-type textures
       record->VerifyDataType(target);
@@ -3390,11 +3517,14 @@ bool WrappedOpenGL::Serialise_glCompressedTextureImage1DEXT(SerialiserType &ser,
     // or just size the texture to be filled with data later (buf=NULL)
     GLuint unpackbuf = 0;
     GL.glGetIntegerv(eGL_PIXEL_UNPACK_BUFFER_BINDING, (GLint *)&unpackbuf);
-    GL.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
-
     GLint align = 1;
     GL.glGetIntegerv(eGL_UNPACK_ALIGNMENT, &align);
-    GL.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+
+    if(IsLoading(m_State) && m_CurEventID == 0)
+    {
+      GL.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
+      GL.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+    }
 
     GL.glCompressedTextureImage1DEXT(texture.name, target, level, internalformat, width, border,
                                      imageSize, databuf);
@@ -3460,7 +3590,17 @@ void WrappedOpenGL::Common_glCompressedTextureImage1DEXT(ResourceId texId, GLenu
                                               internalformat, width, border, imageSize,
                                               fromunpackbuf ? NULL : pixels);
 
-      record->AddChunk(scope.Get());
+      Chunk *chunk = scope.Get();
+      record->AddChunk(chunk);
+
+      // if we're actively capturing this may be a creation but it may be a re-initialise. Insert
+      // the chunk here as well to ensure consistent replay
+      if(IsActiveCapturing(m_State))
+      {
+        GetContextRecord()->AddChunk(chunk->Duplicate());
+        GetResourceManager()->MarkResourceFrameReferenced(record->GetResourceID(),
+                                                          eFrameRef_PartialWrite);
+      }
 
       // illegal to re-type textures
       record->VerifyDataType(target);
@@ -3717,11 +3857,14 @@ bool WrappedOpenGL::Serialise_glCompressedTextureImage2DEXT(SerialiserType &ser,
     // or just size the texture to be filled with data later (buf=NULL)
     GLuint unpackbuf = 0;
     GL.glGetIntegerv(eGL_PIXEL_UNPACK_BUFFER_BINDING, (GLint *)&unpackbuf);
-    GL.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
-
     GLint align = 1;
     GL.glGetIntegerv(eGL_UNPACK_ALIGNMENT, &align);
-    GL.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+
+    if(IsLoading(m_State) && m_CurEventID == 0)
+    {
+      GL.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
+      GL.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+    }
 
     if(TextureBinding(target) == eGL_TEXTURE_BINDING_CUBE_MAP &&
        mipsValid != m_Textures[liveId].mipsValid)
@@ -3814,7 +3957,17 @@ void WrappedOpenGL::Common_glCompressedTextureImage2DEXT(ResourceId texId, GLenu
                                               internalformat, width, height, border, imageSize,
                                               fromunpackbuf ? NULL : pixels);
 
-      record->AddChunk(scope.Get());
+      Chunk *chunk = scope.Get();
+      record->AddChunk(chunk);
+
+      // if we're actively capturing this may be a creation but it may be a re-initialise. Insert
+      // the chunk here as well to ensure consistent replay
+      if(IsActiveCapturing(m_State))
+      {
+        GetContextRecord()->AddChunk(chunk->Duplicate());
+        GetResourceManager()->MarkResourceFrameReferenced(record->GetResourceID(),
+                                                          eFrameRef_PartialWrite);
+      }
 
       // illegal to re-type textures
       record->VerifyDataType(target);
@@ -3976,11 +4129,14 @@ bool WrappedOpenGL::Serialise_glCompressedTextureImage3DEXT(SerialiserType &ser,
     // or just size the texture to be filled with data later (buf=NULL)
     GLuint unpackbuf = 0;
     GL.glGetIntegerv(eGL_PIXEL_UNPACK_BUFFER_BINDING, (GLint *)&unpackbuf);
-    GL.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
-
     GLint align = 1;
     GL.glGetIntegerv(eGL_UNPACK_ALIGNMENT, &align);
-    GL.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+
+    if(IsLoading(m_State) && m_CurEventID == 0)
+    {
+      GL.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
+      GL.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+    }
 
     GL.glCompressedTextureImage3DEXT(texture.name, target, level, internalformat, width, height,
                                      depth, border, imageSize, databuf);
@@ -4052,7 +4208,17 @@ void WrappedOpenGL::Common_glCompressedTextureImage3DEXT(ResourceId texId, GLenu
                                               internalformat, width, height, depth, border,
                                               imageSize, fromunpackbuf ? NULL : pixels);
 
-      record->AddChunk(scope.Get());
+      Chunk *chunk = scope.Get();
+      record->AddChunk(chunk);
+
+      // if we're actively capturing this may be a creation but it may be a re-initialise. Insert
+      // the chunk here as well to ensure consistent replay
+      if(IsActiveCapturing(m_State))
+      {
+        GetContextRecord()->AddChunk(chunk->Duplicate());
+        GetResourceManager()->MarkResourceFrameReferenced(record->GetResourceID(),
+                                                          eFrameRef_PartialWrite);
+      }
 
       // illegal to re-type textures
       record->VerifyDataType(target);

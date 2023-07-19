@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -329,6 +329,10 @@ struct EventItemModel : public QAbstractItemModel
 
     for(uint32_t markerEID : fakeMarkers)
       CalculateTotalDuration(m_Nodes[markerEID]);
+
+    // if we had fake markers recalculate the root node for the frame
+    if(!fakeMarkers.empty())
+      CalculateTotalDuration(m_Nodes[0]);
 
     // Qt's item model kind of sucks and doesn't have a good way to say "all data in this column has
     // changed" let alone "all data has changed". dataChanged() is limited to only a group of model

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -219,6 +219,12 @@ void RDTableView::keyPressEvent(QKeyEvent *e)
   }
 
   return QTableView::keyPressEvent(e);
+}
+
+void RDTableView::keyboardSearch(const QString &search)
+{
+  if(m_allowKeyboardSearches)
+    return QTableView::keyboardSearch(search);
 }
 
 void RDTableView::paintEvent(QPaintEvent *e)

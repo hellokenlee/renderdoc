@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -332,7 +332,9 @@ struct Sampler
   bool operator==(const Sampler &o) const
   {
     return bind == o.bind && tableIndex == o.tableIndex && addressU == o.addressU &&
-           addressV == o.addressV && addressW == o.addressW && borderColor == o.borderColor &&
+           addressV == o.addressV && addressW == o.addressW &&
+           borderColorValue.uintValue == o.borderColorValue.uintValue &&
+           borderColorType == o.borderColorType && unnormalized == o.unnormalized &&
            compareFunction == o.compareFunction && filter == o.filter &&
            maxAnisotropy == o.maxAnisotropy && maxLOD == o.maxLOD && minLOD == o.minLOD &&
            mipLODBias == o.mipLODBias;
@@ -349,8 +351,12 @@ struct Sampler
       return addressV < o.addressV;
     if(!(addressW == o.addressW))
       return addressW < o.addressW;
-    if(!(borderColor == o.borderColor))
-      return borderColor < o.borderColor;
+    if(!(borderColorValue.uintValue == o.borderColorValue.uintValue))
+      return borderColorValue.uintValue < o.borderColorValue.uintValue;
+    if(!(borderColorType == o.borderColorType))
+      return borderColorType < o.borderColorType;
+    if(!(unnormalized == o.unnormalized))
+      return unnormalized < o.unnormalized;
     if(!(compareFunction == o.compareFunction))
       return compareFunction < o.compareFunction;
     if(!(filter == o.filter))
@@ -376,11 +382,20 @@ struct Sampler
   AddressMode addressV = AddressMode::Wrap;
   DOCUMENT("The :class:`AddressMode` in the W direction.");
   AddressMode addressW = AddressMode::Wrap;
-  DOCUMENT(R"(The RGBA border color.
+  DOCUMENT(R"(For samplers - the RGBA border color value. Typically the float tuple inside will be used,
+but the exact component type can be checked with :data:`borderColorType`.
 
-:type: Tuple[float,float,float,float]
+:type: PixelValue
 )");
-  rdcfixedarray<float, 4> borderColor = {0.0f, 0.0f, 0.0f, 0.0f};
+  PixelValue borderColorValue = {};
+  DOCUMENT(R"(For samplers - the RGBA border color type. This determines how the data in
+:data:`borderColorValue` will be interpreted.
+
+:type: CompType
+)");
+  CompType borderColorType = CompType::Float;
+  DOCUMENT("``True`` if unnormalized co-ordinates are used in this sampler.");
+  bool unnormalized = false;
   DOCUMENT("The :class:`CompareFunction` for comparison samplers.");
   CompareFunction compareFunction = CompareFunction::AlwaysTrue;
   DOCUMENT(R"(The filtering mode.
@@ -668,7 +683,7 @@ struct RasterizerState
 )");
   bool frontCCW = false;
   DOCUMENT("The fixed depth bias value to apply to z-values.");
-  int32_t depthBias = 0;
+  float depthBias = 0.0f;
   DOCUMENT(R"(The clamp value for calculated depth bias from :data:`depthBias` and
 :data:`slopeScaledDepthBias`
 )");
@@ -677,12 +692,8 @@ struct RasterizerState
   float slopeScaledDepthBias = 0.0f;
   DOCUMENT("``True`` if pixels outside of the near and far depth planes should be clipped.");
   bool depthClip = false;
-  DOCUMENT("``True`` if the quadrilateral MSAA algorithm should be used on MSAA targets.");
-  bool multisampleEnable = false;
-  DOCUMENT(
-      "``True`` if lines should be anti-aliased. Ignored if :data:`multisampleEnable` is "
-      "``False``.");
-  bool antialiasedLines = false;
+  DOCUMENT("The line rasterization mode.");
+  LineRaster lineRasterMode = LineRaster::Default;
   DOCUMENT(R"(A sample count to force rasterization to when UAV rendering or rasterizing, or 0 to
 not force any sample count.
 )");

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -54,7 +54,7 @@ struct D3D12InitParams
   UINT SDKVersion = 0;
 
   // check if a frame capture section version is supported
-  static const uint64_t CurrentVersion = 0xE;
+  static const uint64_t CurrentVersion = 0x10;
 
   static bool IsSupportedVersion(uint64_t ver);
 };
@@ -360,11 +360,12 @@ struct WrappedDRED : public ID3D12DeviceRemovedExtendedData1
   }
 };
 
-struct WrappedDREDSettings : public ID3D12DeviceRemovedExtendedDataSettings1
+struct WrappedDREDSettings : public ID3D12DeviceRemovedExtendedDataSettings2
 {
   WrappedID3D12Device &m_pDevice;
   ID3D12DeviceRemovedExtendedDataSettings *m_pReal = NULL;
   ID3D12DeviceRemovedExtendedDataSettings1 *m_pReal1 = NULL;
+  ID3D12DeviceRemovedExtendedDataSettings2 *m_pReal2 = NULL;
 
   WrappedDREDSettings(WrappedID3D12Device &dev) : m_pDevice(dev) {}
   //////////////////////////////
@@ -392,7 +393,16 @@ struct WrappedDREDSettings : public ID3D12DeviceRemovedExtendedDataSettings1
   // implement ID3D12DeviceRemovedExtendedDataSettings1
   virtual void STDMETHODCALLTYPE SetBreadcrumbContextEnablement(D3D12_DRED_ENABLEMENT Enablement)
   {
-    m_pReal1->SetBreadcrumbContextEnablement(Enablement);
+    if(m_pReal1)
+      m_pReal1->SetBreadcrumbContextEnablement(Enablement);
+  }
+
+  //////////////////////////////
+  // implement ID3D12DeviceRemovedExtendedDataSettings2
+  virtual void STDMETHODCALLTYPE UseMarkersOnlyAutoBreadcrumbs(BOOL MarkersOnly)
+  {
+    if(m_pReal2)
+      m_pReal2->UseMarkersOnlyAutoBreadcrumbs(MarkersOnly);
   }
 };
 
@@ -572,7 +582,7 @@ class WrappedID3D12CommandQueue;
   template <typename SerialiserType>                         \
   bool CONCAT(Serialise_, func(SerialiserType &ser, __VA_ARGS__));
 
-class WrappedID3D12Device : public IFrameCapturer, public ID3DDevice, public ID3D12Device9
+class WrappedID3D12Device : public IFrameCapturer, public ID3DDevice, public ID3D12Device12
 {
 private:
   ID3D12Device *m_pDevice;
@@ -585,11 +595,17 @@ private:
   ID3D12Device7 *m_pDevice7;
   ID3D12Device8 *m_pDevice8;
   ID3D12Device9 *m_pDevice9;
+  ID3D12Device10 *m_pDevice10;
+  ID3D12Device11 *m_pDevice11;
+  ID3D12Device12 *m_pDevice12;
   ID3D12DeviceDownlevel *m_pDownlevel;
 
   // list of all queues being captured
   rdcarray<WrappedID3D12CommandQueue *> m_Queues;
   rdcarray<ID3D12Fence *> m_QueueFences;
+
+  // if we've called GPUSyncAllQueues since the last replay
+  bool m_GPUSynced = false;
 
   // list of queues and buffers kept alive during capture artificially even if the user destroys
   // them, so we can use them in the capture. Storing this separately prevents races where a
@@ -712,6 +728,8 @@ private:
 
   bool m_UsedDXIL = false;
 
+  DriverInformation m_DriverInfo = {};
+
   D3D12InitParams m_InitParams;
   uint64_t m_SectionVersion;
   ReplayOptions m_ReplayOptions;
@@ -767,6 +785,10 @@ private:
   D3D12_FEATURE_DATA_D3D12_OPTIONS2 m_D3D12Opts2;
   D3D12_FEATURE_DATA_D3D12_OPTIONS3 m_D3D12Opts3;
   D3D12_FEATURE_DATA_D3D12_OPTIONS6 m_D3D12Opts6;
+  D3D12_FEATURE_DATA_D3D12_OPTIONS12 m_D3D12Opts12;
+  D3D12_FEATURE_DATA_D3D12_OPTIONS14 m_D3D12Opts14;
+  D3D12_FEATURE_DATA_D3D12_OPTIONS15 m_D3D12Opts15;
+  D3D12_FEATURE_DATA_D3D12_OPTIONS16 m_D3D12Opts16;
   UINT m_DescriptorIncrements[D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES];
 
   template <typename SerialiserType>
@@ -798,10 +820,16 @@ public:
   const D3D12_FEATURE_DATA_D3D12_OPTIONS2 &GetOpts2() { return m_D3D12Opts2; }
   const D3D12_FEATURE_DATA_D3D12_OPTIONS3 &GetOpts3() { return m_D3D12Opts3; }
   const D3D12_FEATURE_DATA_D3D12_OPTIONS6 &GetOpts6() { return m_D3D12Opts6; }
+  const D3D12_FEATURE_DATA_D3D12_OPTIONS12 &GetOpts12() { return m_D3D12Opts12; }
+  const D3D12_FEATURE_DATA_D3D12_OPTIONS14 &GetOpts14() { return m_D3D12Opts14; }
+  const D3D12_FEATURE_DATA_D3D12_OPTIONS15 &GetOpts15() { return m_D3D12Opts15; }
+  const D3D12_FEATURE_DATA_D3D12_OPTIONS16 &GetOpts16() { return m_D3D12Opts16; }
   void RemoveQueue(WrappedID3D12CommandQueue *queue);
 
   // only valid on replay
-  std::map<ResourceId, WrappedID3D12Resource *> &GetResourceList() { return *m_ResourceList; }
+  const std::map<ResourceId, WrappedID3D12Resource *> &GetResourceList() { return *m_ResourceList; }
+  void AddReplayResource(ResourceId id, WrappedID3D12Resource *res) { (*m_ResourceList)[id] = res; }
+  void RemoveReplayResource(ResourceId id) { (*m_ResourceList).erase(id); }
   rdcarray<WrappedID3D12PipelineState *> &GetPipelineList() { return *m_PipelineList; }
   ////////////////////////////////////////////////////////////////
   // non wrapping interface
@@ -847,16 +875,14 @@ public:
   void AddResourceCurChunk(ResourceId id);
 
   bool UsedDXIL() { return m_UsedDXIL; }
-  rdcarray<D3D12_RESOURCE_STATES> &GetSubresourceStates(ResourceId id)
-  {
-    return m_ResourceStates[id];
-  }
+  SubresourceStateVector &GetSubresourceStates(ResourceId id) { return m_ResourceStates[id]; }
   const std::map<ResourceId, SubresourceStateVector> &GetSubresourceStates()
   {
     return m_ResourceStates;
   }
   const std::map<ResourceId, DXGI_FORMAT> &GetBackbufferFormats() { return m_BackbufferFormat; }
   void SetLogFile(const char *logfile);
+  void SetDriverInfo(const DriverInformation &info) { m_DriverInfo = info; }
   void SetInitParams(const D3D12InitParams &params, uint64_t sectionVersion,
                      const ReplayOptions &opts, INVAPID3DDevice *nvapi, IAGSD3DDevice *ags)
   {
@@ -874,7 +900,7 @@ public:
   const rdcarray<WrappedID3D12CommandQueue *> &GetQueues() { return m_Queues; }
   ID3D12CommandAllocator *GetAlloc() { return m_Alloc; }
   ID3D12InfoQueue *GetInfoQueue() { return m_pInfoQueue; }
-  void ApplyBarriers(rdcarray<D3D12_RESOURCE_BARRIER> &barriers);
+  void ApplyBarriers(BarrierSet &barriers);
 
   void GetDynamicDescriptorReferences(rdcarray<D3D12Descriptor> &refs)
   {
@@ -929,6 +955,11 @@ public:
   bool IsReadOnlyResource(ResourceId id) { return m_ModResources.find(id) == m_ModResources.end(); }
   void CloseInitialStateList();
   ID3D12Resource *GetUploadBuffer(uint64_t chunkOffset, uint64_t byteSize);
+
+  HRESULT CreateInitialStateBuffer(const D3D12_RESOURCE_DESC &desc, ID3D12Resource **buf);
+  rdcarray<ID3D12Heap *> m_InitialStateHeaps;
+  UINT64 m_LastInitialStateHeapOffset = 0;
+
   void ApplyInitialContents();
 
   void AddCaptureSubmission();
@@ -988,7 +1019,9 @@ public:
        iid == __uuidof(ID3D12Device2) || iid == __uuidof(ID3D12Device3) ||
        iid == __uuidof(ID3D12Device4) || iid == __uuidof(ID3D12Device5) ||
        iid == __uuidof(ID3D12Device6) || iid == __uuidof(ID3D12Device7) ||
-       iid == __uuidof(ID3D12Device8) || iid == __uuidof(ID3D12Device9))
+       iid == __uuidof(ID3D12Device8) || iid == __uuidof(ID3D12Device9) ||
+       iid == __uuidof(ID3D12Device10) || iid == __uuidof(ID3D12Device11) ||
+       iid == __uuidof(ID3D12Device12))
       return true;
 
     return false;
@@ -1015,6 +1048,12 @@ public:
       return (ID3D12Device8 *)this;
     else if(iid == __uuidof(ID3D12Device9))
       return (ID3D12Device9 *)this;
+    else if(iid == __uuidof(ID3D12Device10))
+      return (ID3D12Device10 *)this;
+    else if(iid == __uuidof(ID3D12Device11))
+      return (ID3D12Device11 *)this;
+    else if(iid == __uuidof(ID3D12Device12))
+      return (ID3D12Device12 *)this;
 
     RDCERR("Requested unknown device interface %s", ToStr(iid).c_str());
 
@@ -1103,6 +1142,24 @@ public:
     else if(riid == __uuidof(ID3D12Device9))
     {
       *ppvDevice = (ID3D12Device9 *)this;
+      this->AddRef();
+      return S_OK;
+    }
+    else if(riid == __uuidof(ID3D12Device10))
+    {
+      *ppvDevice = (ID3D12Device10 *)this;
+      this->AddRef();
+      return S_OK;
+    }
+    else if(riid == __uuidof(ID3D12Device11))
+    {
+      *ppvDevice = (ID3D12Device11 *)this;
+      this->AddRef();
+      return S_OK;
+    }
+    else if(riid == __uuidof(ID3D12Device12))
+    {
+      *ppvDevice = (ID3D12Device12 *)this;
       this->AddRef();
       return S_OK;
     }
@@ -1302,6 +1359,53 @@ public:
   IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual D3D12_HEAP_PROPERTIES STDMETHODCALLTYPE,
                                        GetCustomHeapProperties, UINT nodeMask,
                                        D3D12_HEAP_TYPE heapType);
+
+  bool Serialise_CreateResource(D3D12Chunk chunkType, ID3D12Heap *pHeap, UINT64 HeapOffset,
+                                D3D12_HEAP_PROPERTIES &props, D3D12_HEAP_FLAGS HeapFlags,
+                                D3D12_RESOURCE_DESC1 &desc, D3D12ResourceLayout InitialResourceState,
+                                const D3D12_CLEAR_VALUE *pOptimizedClearValue,
+                                UINT NumCastableFormats, const DXGI_FORMAT *pCastableFormats,
+                                ResourceId pResource, uint64_t gpuAddress);
+  bool Serialise_CreateResource(D3D12Chunk chunkType, ID3D12Heap *pHeap, UINT64 HeapOffset,
+                                D3D12_HEAP_PROPERTIES &props, D3D12_HEAP_FLAGS HeapFlags,
+                                D3D12_RESOURCE_DESC &desc, D3D12ResourceLayout InitialResourceState,
+                                const D3D12_CLEAR_VALUE *pOptimizedClearValue,
+                                UINT NumCastableFormats, const DXGI_FORMAT *pCastableFormats,
+                                ResourceId pResource, uint64_t gpuAddress)
+  {
+    // upconvert to the DESC1 by just memcpy, since it's a superset and the remainder can be
+    // 0-initialised
+    D3D12_RESOURCE_DESC1 desc1 = {};
+    memcpy(&desc1, &desc, sizeof(desc));
+
+    return Serialise_CreateResource(chunkType, pHeap, HeapOffset, props, HeapFlags, desc1,
+                                    InitialResourceState, pOptimizedClearValue, NumCastableFormats,
+                                    pCastableFormats, pResource, gpuAddress);
+  }
+
+  HRESULT CreateResource(D3D12Chunk chunkType, ID3D12Heap *pHeap, UINT64 HeapOffset,
+                         const D3D12_HEAP_PROPERTIES *pHeapProperties, D3D12_HEAP_FLAGS HeapFlags,
+                         D3D12_RESOURCE_DESC1 pDesc, D3D12ResourceLayout InitialLayout,
+                         const D3D12_CLEAR_VALUE *pOptimizedClearValue,
+                         ID3D12ProtectedResourceSession *pProtectedSession, UINT NumCastableFormats,
+                         const DXGI_FORMAT *pCastableFormats, REFIID riidResource,
+                         void **ppvResource);
+  HRESULT CreateResource(D3D12Chunk chunkType, ID3D12Heap *pHeap, UINT64 HeapOffset,
+                         const D3D12_HEAP_PROPERTIES *pHeapProperties, D3D12_HEAP_FLAGS HeapFlags,
+                         D3D12_RESOURCE_DESC pDesc, D3D12ResourceLayout InitialLayout,
+                         const D3D12_CLEAR_VALUE *pOptimizedClearValue,
+                         ID3D12ProtectedResourceSession *pProtectedSession, UINT NumCastableFormats,
+                         const DXGI_FORMAT *pCastableFormats, REFIID riidResource, void **ppvResource)
+  {
+    // upconvert to the DESC1 by just memcpy, since it's a superset and the remainder can be
+    // 0-initialised
+    D3D12_RESOURCE_DESC1 desc1 = {};
+    memcpy(&desc1, &pDesc, sizeof(D3D12_RESOURCE_DESC));
+
+    return CreateResource(chunkType, pHeap, HeapOffset, pHeapProperties, HeapFlags, desc1,
+                          InitialLayout, pOptimizedClearValue, pProtectedSession,
+                          NumCastableFormats, pCastableFormats, riidResource, ppvResource);
+  }
 
   IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateCommittedResource,
                                        const D3D12_HEAP_PROPERTIES *pHeapProperties,
@@ -1566,4 +1670,49 @@ public:
   IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateCommandQueue1,
                                        _In_ const D3D12_COMMAND_QUEUE_DESC *pDesc, REFIID CreatorID,
                                        REFIID riid, _COM_Outptr_ void **ppCommandQueue);
+
+  //////////////////////////////
+  // implement ID3D12Device10
+
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(
+      virtual HRESULT STDMETHODCALLTYPE, CreateCommittedResource3,
+      _In_ const D3D12_HEAP_PROPERTIES *pHeapProperties, D3D12_HEAP_FLAGS HeapFlags,
+      _In_ const D3D12_RESOURCE_DESC1 *pDesc, D3D12_BARRIER_LAYOUT InitialLayout,
+      _In_opt_ const D3D12_CLEAR_VALUE *pOptimizedClearValue,
+      _In_opt_ ID3D12ProtectedResourceSession *pProtectedSession, UINT32 NumCastableFormats,
+      _In_opt_count_(NumCastableFormats) const DXGI_FORMAT *pCastableFormats, REFIID riidResource,
+      _COM_Outptr_opt_ void **ppvResource);
+
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(
+      virtual HRESULT STDMETHODCALLTYPE, CreatePlacedResource2, _In_ ID3D12Heap *pHeap,
+      UINT64 HeapOffset, _In_ const D3D12_RESOURCE_DESC1 *pDesc, D3D12_BARRIER_LAYOUT InitialLayout,
+      _In_opt_ const D3D12_CLEAR_VALUE *pOptimizedClearValue, UINT32 NumCastableFormats,
+      _In_opt_count_(NumCastableFormats) const DXGI_FORMAT *pCastableFormats, REFIID riid,
+      _COM_Outptr_opt_ void **ppvResource);
+
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateReservedResource2,
+                                       _In_ const D3D12_RESOURCE_DESC *pDesc,
+                                       D3D12_BARRIER_LAYOUT InitialLayout,
+                                       _In_opt_ const D3D12_CLEAR_VALUE *pOptimizedClearValue,
+                                       _In_opt_ ID3D12ProtectedResourceSession *pProtectedSession,
+                                       UINT32 NumCastableFormats,
+                                       _In_opt_count_(NumCastableFormats)
+                                           const DXGI_FORMAT *pCastableFormats,
+                                       REFIID riid, _COM_Outptr_opt_ void **ppvResource);
+
+  //////////////////////////////
+  // implement ID3D12Device11
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual void STDMETHODCALLTYPE, CreateSampler2,
+                                       _In_ const D3D12_SAMPLER_DESC2 *pDesc,
+                                       _In_ D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor);
+
+  //////////////////////////////
+  // implement ID3D12Device12
+
+  virtual D3D12_RESOURCE_ALLOCATION_INFO STDMETHODCALLTYPE GetResourceAllocationInfo3(
+      UINT visibleMask, UINT numResourceDescs,
+      _In_reads_(numResourceDescs) const D3D12_RESOURCE_DESC1 *pResourceDescs,
+      _In_opt_count_(numResourceDescs) const UINT32 *pNumCastableFormats,
+      _In_opt_count_(numResourceDescs) const DXGI_FORMAT *const *ppCastableFormats,
+      _Out_writes_opt_(numResourceDescs) D3D12_RESOURCE_ALLOCATION_INFO1 *pResourceAllocationInfo1);
 };

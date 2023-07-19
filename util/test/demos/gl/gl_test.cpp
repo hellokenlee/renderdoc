@@ -1,7 +1,7 @@
 /******************************************************************************
 * The MIT License (MIT)
 *
-* Copyright (c) 2019-2022 Baldur Karlsson
+* Copyright (c) 2019-2023 Baldur Karlsson
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -25,9 +25,19 @@
 #include "gl_test.h"
 #include <stdio.h>
 
-static std::string common = R"EOSHADER(
+#if defined(ANDROID)
+static std::string version = "#version 320 es";
+#else
+static std::string version = "#version 410 core";
+#endif
 
-#version 410 core
+static std::string common = version + R"EOSHADER(
+
+
+#if defined(GL_ES)
+precision highp float;
+precision highp int;
+#endif
 
 #define v2f v2f_block \
 {                     \
@@ -60,7 +70,7 @@ std::string GLDefaultPixel = common + R"EOSHADER(
 
 in v2f vertIn;
 
-layout(location = 0, index = 0) out vec4 Color;
+layout(location = 0) out vec4 Color;
 
 void main()
 {
@@ -94,6 +104,19 @@ void OpenGLGraphicsTest::PostInit()
            glGetString(GL_VERSION));
 
   swapBlitFBO = MakeFBO();
+
+  DefaultTriVB = MakeBuffer();
+  glBindBuffer(GL_ARRAY_BUFFER, DefaultTriVB);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(DefaultTri), DefaultTri, GL_STATIC_DRAW);
+
+  DefaultTriVAO = MakeVAO();
+  glBindVertexArray(DefaultTriVAO);
+  ConfigureDefaultVAO();
+
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+  DefaultTriProgram = MakeProgram(GLDefaultVertex, GLDefaultPixel);
 }
 
 void OpenGLGraphicsTest::Shutdown()

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -130,6 +130,9 @@ HANDLE WrappedOpenGL::wglDXRegisterObjectNV(HANDLE hDevice, void *dxObject, GLui
     GetDXTextureProperties(dxObject, fmt, width, height, depth, mips, layers, samples);
 
     GL.glTextureParameteriEXT(wrapped->res.name, type, eGL_TEXTURE_MAX_LEVEL, GLint(mips - 1));
+
+    // consume any errors
+    ClearGLErrors();
 
     ResourceId texId = record->GetResourceID();
     m_Textures[texId].resource = wrapped->res;
@@ -266,6 +269,9 @@ bool WrappedOpenGL::Serialise_wglDXRegisterObjectNV(SerialiserType &ser, GLResou
     GetDXTextureProperties(dxObject, format, width, height, depth, mips, layers, samples);
     if(type != eGL_NONE)
       internalFormat = MakeGLFormat(format);
+    // desktop GL doesn't support BGRA8 as an internal format for some reason
+    if(internalFormat == eGL_BGRA8_EXT)
+      internalFormat = eGL_RGBA8;
 #else
     RDCERR("Should never happen - cannot serialise wglDXRegisterObjectNV, interop is disabled");
 #endif

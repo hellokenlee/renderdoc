@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -45,10 +45,13 @@ enum VulkanDynamicStateIndex
   VkDynamicStencilReference,
   VkDynamicViewportWScalingNV,
   VkDynamicDiscardRectangleEXT,
+  VkDynamicDiscardRectangleEnableEXT,
+  VkDynamicDiscardRectangleModeEXT,
   VkDynamicSampleLocationsEXT,
   VkDynamicViewportShadingRatePaletteNV,
   VkDynamicViewportCoarseSampleOrderNV,
   VkDynamicExclusiveScissorNV,
+  VkDynamicExclusiveScissorEnableNV,
   VkDynamicShadingRateKHR,
   VkDynamicLineStippleEXT,
   VkDynamicCullMode,
@@ -102,6 +105,7 @@ enum VulkanDynamicStateIndex
   VkDynamicShadingRateImageEnableEXT,
   VkDynamicRepresentativeFragTestEXT,
   VkDynamicCoverageReductionModeEXT,
+  VkDynamicAttachmentFeedbackLoopEnableEXT,
   VkDynamicCount,
 };
 
@@ -474,6 +478,9 @@ struct VulkanCreationInfo
 
     // VkPipelineViewportDepthClipControlCreateInfoEXT
     bool negativeOneToOne;
+
+    // VkPipelineRasterizationProvokingVertexStateCreateInfoEXT
+    VkProvokingVertexModeEXT provokingVertex;
   };
   std::unordered_map<ResourceId, Pipeline> m_Pipeline;
 

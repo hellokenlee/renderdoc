@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -159,7 +159,7 @@ WrappedID3D12Resource::~WrappedID3D12Resource()
   }
 
   if(IsReplayMode(m_pDevice->GetState()))
-    m_pDevice->GetResourceList().erase(GetResourceID());
+    m_pDevice->RemoveReplayResource(GetResourceID());
 
   // assuming only valid for buffers
   if(m_pReal->GetDesc().Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
@@ -179,8 +179,6 @@ WrappedID3D12Resource::~WrappedID3D12Resource()
 
 byte *WrappedID3D12Resource::GetMap(UINT Subresource)
 {
-  SCOPED_LOCK(GetResourceRecord()->m_MapLock);
-
   D3D12ResourceRecord::MapData *map = GetResourceRecord()->m_Maps;
   size_t mapcount = GetResourceRecord()->m_MapsCount;
 
@@ -192,8 +190,6 @@ byte *WrappedID3D12Resource::GetMap(UINT Subresource)
 
 byte *WrappedID3D12Resource::GetShadow(UINT Subresource)
 {
-  SCOPED_LOCK(GetResourceRecord()->m_MapLock);
-
   D3D12ResourceRecord::MapData *map = GetResourceRecord()->m_Maps;
 
   return map[Subresource].shadowPtr;
@@ -201,8 +197,6 @@ byte *WrappedID3D12Resource::GetShadow(UINT Subresource)
 
 void WrappedID3D12Resource::AllocShadow(UINT Subresource, size_t size)
 {
-  SCOPED_LOCK(GetResourceRecord()->m_MapLock);
-
   D3D12ResourceRecord::MapData *map = GetResourceRecord()->m_Maps;
 
   if(map[Subresource].shadowPtr == NULL)
@@ -325,6 +319,22 @@ void WrappedID3D12Resource::RefBuffers(D3D12ResourceManager *rm)
   SCOPED_READLOCK(m_Addresses.addressLock);
   for(size_t i = 0; i < m_Addresses.addresses.size(); i++)
     rm->MarkResourceFrameReferenced(m_Addresses.addresses[i].id, eFrameRef_Read);
+}
+
+void WrappedID3D12Resource::GetMappableIDs(D3D12ResourceManager *rm,
+                                           const std::unordered_set<ResourceId> &refdIDs,
+                                           std::unordered_set<ResourceId> &mappableIDs)
+{
+  SCOPED_READLOCK(m_Addresses.addressLock);
+  for(size_t i = 0; i < m_Addresses.addresses.size(); i++)
+  {
+    if(refdIDs.find(m_Addresses.addresses[i].id) != refdIDs.end())
+    {
+      WrappedID3D12Resource *resource =
+          (WrappedID3D12Resource *)rm->GetCurrentResource(m_Addresses.addresses[i].id);
+      mappableIDs.insert(resource->GetMappableID());
+    }
+  }
 }
 
 rdcarray<ID3D12Resource *> WrappedID3D12Resource::AddRefBuffersBeforeCapture(D3D12ResourceManager *rm)
@@ -638,10 +648,22 @@ D3D12_UNORDERED_ACCESS_VIEW_DESC MakeUAVDesc(const D3D12_RESOURCE_DESC &desc)
   }
   else if(desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D)
   {
-    ret.ViewDimension = arrayed ? D3D12_UAV_DIMENSION_TEXTURE2DARRAY : D3D12_UAV_DIMENSION_TEXTURE2D;
+    if(desc.SampleDesc.Count > 1)
+    {
+      ret.ViewDimension =
+          arrayed ? D3D12_UAV_DIMENSION_TEXTURE2DMSARRAY : D3D12_UAV_DIMENSION_TEXTURE2DMS;
 
-    if(arrayed)
-      ret.Texture2DArray.ArraySize = desc.DepthOrArraySize;
+      if(arrayed)
+        ret.Texture2DMSArray.ArraySize = desc.DepthOrArraySize;
+    }
+    else
+    {
+      ret.ViewDimension =
+          arrayed ? D3D12_UAV_DIMENSION_TEXTURE2DARRAY : D3D12_UAV_DIMENSION_TEXTURE2D;
+
+      if(arrayed)
+        ret.Texture2DArray.ArraySize = desc.DepthOrArraySize;
+    }
   }
   else if(desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D)
   {

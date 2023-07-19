@@ -216,7 +216,7 @@ class VK_Pixel_History(rdtest.TestCase):
             [[event_id, depth_test_eid], [primitive_id, 3], [depth_test_failed, False],
              [shader_out_col, (0.0, 0.0, 1.0, 2.75)], [shader_out_depth, 0.10], [post_mod_col, (0.0, 0.0, 1.0, 1.0)],
              [post_mod_depth, 0.10]],
-            [[event_id, depth_test_eid], [primitive_id, 4], [depth_test_failed, False],
+            [[event_id, depth_test_eid], [primitive_id, 4], [depth_test_failed, False], [depth_bounds_failed, True],
              [shader_out_col, (1.0, 1.0, 1.0, 2.75)], [shader_out_depth, 0.05], [post_mod_col, (0.0, 0.0, 1.0, 1.0)],
              [post_mod_depth, 0.10]],
         ]
@@ -424,6 +424,10 @@ class VK_Pixel_History(rdtest.TestCase):
                 if self.is_depth:
                     a = (modifs[i].preMod.depth, modifs[i].preMod.stencil)
                     b = (modifs[i].postMod.depth, modifs[i].postMod.stencil)
+
+                    if a[1] == -2 or b[2] == -2:
+                        a = (a[0], -2)
+                        b = (b[0], -2)
 
                 if not rdtest.value_compare(a, b):
                     raise rdtest.TestFailureException(

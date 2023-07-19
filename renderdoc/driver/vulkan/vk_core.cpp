@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -38,6 +38,10 @@
 #include "stb/stb_image_write.h"
 
 RDOC_EXTERN_CONFIG(bool, Vulkan_Debug_VerboseCommandRecording);
+
+RDOC_DEBUG_CONFIG(bool, Vulkan_Debug_SingleSubmitFlushing, false,
+                  "Every command buffer is submitted and fully flushed to the GPU, to narrow down "
+                  "the source of problems.");
 
 uint64_t VkInitParams::GetSerialiseSize()
 {
@@ -228,6 +232,11 @@ VkCommandBuffer WrappedVulkan::GetInitStateCmd()
       VkMarkerRegion::Begin("!!!!RenderDoc Internal: ApplyInitialContents batched list",
                             initStateCurCmd);
     }
+    else
+    {
+      VkMarkerRegion::Begin("!!!!RenderDoc Internal: PrepareInitialContents batched list",
+                            initStateCurCmd);
+    }
   }
 
   initStateCurBatch++;
@@ -351,9 +360,8 @@ void WrappedVulkan::SubmitCmds(VkSemaphore *unwrappedWaitSemaphores,
   m_InternalCmds.submittedcmds.append(m_InternalCmds.pendingcmds);
   m_InternalCmds.pendingcmds.clear();
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-  FlushQ();
-#endif
+  if(Vulkan_Debug_SingleSubmitFlushing())
+    FlushQ();
 }
 
 VkSemaphore WrappedVulkan::GetNextSemaphore()
@@ -413,32 +421,16 @@ void WrappedVulkan::FlushQ()
     CheckVkResult(vkr);
   }
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-  if(m_Device != VK_NULL_HANDLE)
+  if(Vulkan_Debug_SingleSubmitFlushing() && m_Device != VK_NULL_HANDLE)
   {
     ObjDisp(m_Device)->DeviceWaitIdle(Unwrap(m_Device));
     VkResult vkr = ObjDisp(m_Device)->DeviceWaitIdle(Unwrap(m_Device));
     CheckVkResult(vkr);
   }
-#endif
 
   for(std::function<void()> cleanup : m_PendingCleanups)
     cleanup();
   m_PendingCleanups.clear();
-
-  if(!IsStructuredExporting(m_State))
-  {
-    // destroy any events we created for waiting on
-    for(size_t i = 0; i < m_CleanupEvents.size(); i++)
-      ObjDisp(GetDev())->DestroyEvent(Unwrap(GetDev()), m_CleanupEvents[i], NULL);
-
-    m_CleanupEvents.clear();
-
-    for(const rdcpair<VkCommandPool, VkCommandBuffer> &rerecord : m_RerecordCmdList)
-      vkFreeCommandBuffers(GetDev(), rerecord.first, 1, &rerecord.second);
-
-    m_RerecordCmdList.clear();
-  }
 
   if(!m_InternalCmds.submittedcmds.empty())
   {
@@ -542,48 +534,52 @@ void WrappedVulkan::SubmitAndFlushImageStateBarriers(ImageBarrierSequence &barri
           NULL,    // signal semaphores
       };
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-      for(auto it = batch.begin(); it != batch.end(); ++it)
+      if(Vulkan_Debug_SingleSubmitFlushing())
+      {
+        for(auto it = batch.begin(); it != batch.end(); ++it)
+        {
+          vkr = ObjDisp(cmd)->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
+          CheckVkResult(vkr);
+
+          DoPipelineBarrier(cmd, 1, it);
+          vkr = ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
+          CheckVkResult(vkr);
+
+          vkr = ObjDisp(queue)->QueueSubmit(Unwrap(queue), 1, &submitInfo, VK_NULL_HANDLE);
+          CheckVkResult(vkr);
+
+          vkr = ObjDisp(queue)->QueueWaitIdle(Unwrap(queue));
+          CheckVkResult(vkr);
+        }
+      }
+      else
       {
         vkr = ObjDisp(cmd)->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
         CheckVkResult(vkr);
 
-        DoPipelineBarrier(cmd, 1, it);
+        DoPipelineBarrier(cmd, (uint32_t)batch.size(), batch.data());
+
         vkr = ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
         CheckVkResult(vkr);
 
-        vkr = ObjDisp(queue)->QueueSubmit(Unwrap(queue), 1, &submitInfo, VK_NULL_HANDLE);
+        queueFamilyFences.resize_for_index(queueFamilyIndex);
+        VkFence &fence = queueFamilyFences[queueFamilyIndex];
+        if(fence == VK_NULL_HANDLE)
+        {
+          VkFenceCreateInfo fenceInfo = {
+              /* sType = */ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+              /* pNext = */ NULL,
+              /* flags = */ 0,
+          };
+          vkr = ObjDisp(m_Device)->CreateFence(Unwrap(m_Device), &fenceInfo, NULL, &fence);
+          CheckVkResult(vkr);
+        }
+
+        vkr = ObjDisp(queue)->QueueSubmit(Unwrap(queue), 1, &submitInfo, fence);
         CheckVkResult(vkr);
-
-        vkr = ObjDisp(queue)->QueueWaitIdle(Unwrap(queue));
-        CheckVkResult(vkr);
-      }
-#else
-      vkr = ObjDisp(cmd)->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
-      CheckVkResult(vkr);
-
-      DoPipelineBarrier(cmd, (uint32_t)batch.size(), batch.data());
-
-      vkr = ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
-      CheckVkResult(vkr);
-
-      queueFamilyFences.resize_for_index(queueFamilyIndex);
-      VkFence &fence = queueFamilyFences[queueFamilyIndex];
-      if(fence == VK_NULL_HANDLE)
-      {
-        VkFenceCreateInfo fenceInfo = {
-            /* sType = */ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-            /* pNext = */ NULL,
-            /* flags = */ 0,
-        };
-        vkr = ObjDisp(m_Device)->CreateFence(Unwrap(m_Device), &fenceInfo, NULL, &fence);
-        CheckVkResult(vkr);
+        submittedFences.push_back(fence);
       }
 
-      vkr = ObjDisp(queue)->QueueSubmit(Unwrap(queue), 1, &submitInfo, fence);
-      CheckVkResult(vkr);
-      submittedFences.push_back(fence);
-#endif
       batch.clear();
     }
     if(!submittedFences.empty())
@@ -900,6 +896,10 @@ static const VkExtensionProperties supportedExtensions[] = {
         VK_EXT_ASTC_DECODE_MODE_EXTENSION_NAME, VK_EXT_ASTC_DECODE_MODE_SPEC_VERSION,
     },
     {
+        VK_EXT_ATTACHMENT_FEEDBACK_LOOP_DYNAMIC_STATE_EXTENSION_NAME,
+        VK_EXT_ATTACHMENT_FEEDBACK_LOOP_DYNAMIC_STATE_SPEC_VERSION,
+    },
+    {
         VK_EXT_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_EXTENSION_NAME,
         VK_EXT_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_SPEC_VERSION,
     },
@@ -1006,6 +1006,9 @@ static const VkExtensionProperties supportedExtensions[] = {
         VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME, VK_EXT_HOST_QUERY_RESET_SPEC_VERSION,
     },
     {
+        VK_EXT_IMAGE_2D_VIEW_OF_3D_EXTENSION_NAME, VK_EXT_IMAGE_2D_VIEW_OF_3D_SPEC_VERSION,
+    },
+    {
         VK_EXT_IMAGE_ROBUSTNESS_EXTENSION_NAME, VK_EXT_IMAGE_ROBUSTNESS_SPEC_VERSION,
     },
     {
@@ -1072,6 +1075,9 @@ static const VkExtensionProperties supportedExtensions[] = {
     },
     {
         VK_EXT_PRIVATE_DATA_EXTENSION_NAME, VK_EXT_PRIVATE_DATA_SPEC_VERSION,
+    },
+    {
+        VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME, VK_EXT_PROVOKING_VERTEX_SPEC_VERSION,
     },
     {
         VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME, VK_EXT_QUEUE_FAMILY_FOREIGN_SPEC_VERSION,
@@ -1872,6 +1878,8 @@ void WrappedVulkan::StartFrameCapture(DeviceOwnedWindow devWnd)
   if(!IsBackgroundCapturing(m_State))
     return;
 
+  m_CaptureFailure = false;
+
   RDCLOG("Starting capture");
 
   if(m_Queue == VK_NULL_HANDLE && m_QueueFamilyIdx != ~0U)
@@ -1939,11 +1947,8 @@ void WrappedVulkan::StartFrameCapture(DeviceOwnedWindow devWnd)
       CheckVkResult(vkr);
     }
 
+    m_PreparedNotSerialisedInitStates.clear();
     GetResourceManager()->PrepareInitialContents();
-    SubmitAndFlushImageStateBarriers(m_setupImageBarriers);
-    SubmitCmds();
-    FlushQ();
-    SubmitAndFlushImageStateBarriers(m_cleanupImageBarriers);
 
     {
       SCOPED_LOCK(m_CapDescriptorsLock);
@@ -1987,6 +1992,14 @@ bool WrappedVulkan::EndFrameCapture(DeviceOwnedWindow devWnd)
 {
   if(!IsActiveCapturing(m_State))
     return true;
+
+  if(m_CaptureFailure)
+  {
+    m_LastCaptureFailed = Timing::GetUnixTimestamp();
+    return DiscardFrameCapture(devWnd);
+  }
+
+  m_CaptureFailure = false;
 
   VkSwapchainKHR swap = VK_NULL_HANDLE;
 
@@ -2404,6 +2417,8 @@ bool WrappedVulkan::EndFrameCapture(DeviceOwnedWindow devWnd)
         it->second->Write(ser);
       }
 
+      m_FrameCaptureRecord->DeleteChunks();
+
       RDCDEBUG("Done");
     }
 
@@ -2439,6 +2454,9 @@ bool WrappedVulkan::EndFrameCapture(DeviceOwnedWindow devWnd)
   GetResourceManager()->FreeInitialContents();
 
   FreeAllMemory(MemoryScope::InitialContents);
+  for(rdcstr &fn : m_InitTempFiles)
+    FileIO::Delete(fn);
+  m_InitTempFiles.clear();
 
   return true;
 }
@@ -2447,6 +2465,8 @@ bool WrappedVulkan::DiscardFrameCapture(DeviceOwnedWindow devWnd)
 {
   if(!IsActiveCapturing(m_State))
     return true;
+
+  m_CaptureFailure = false;
 
   RDCLOG("Discarding frame capture.");
 
@@ -2493,6 +2513,9 @@ bool WrappedVulkan::DiscardFrameCapture(DeviceOwnedWindow devWnd)
   GetResourceManager()->FreeInitialContents();
 
   FreeAllMemory(MemoryScope::InitialContents);
+  for(rdcstr &fn : m_InitTempFiles)
+    FileIO::Delete(fn);
+  m_InitTempFiles.clear();
 
   return true;
 }
@@ -3702,6 +3725,10 @@ bool WrappedVulkan::ProcessChunk(ReadSerialiser &ser, VulkanChunk chunk)
     case VulkanChunk::vkSetDeviceMemoryPriorityEXT:
       return Serialise_vkSetDeviceMemoryPriorityEXT(ser, VK_NULL_HANDLE, VK_NULL_HANDLE, 0.0f);
 
+    case VulkanChunk::vkCmdSetAttachmentFeedbackLoopEnableEXT:
+      return Serialise_vkCmdSetAttachmentFeedbackLoopEnableEXT(ser, VK_NULL_HANDLE,
+                                                               VK_IMAGE_ASPECT_NONE);
+
     // chunks that are reserved but not yet serialised
     case VulkanChunk::vkResetCommandPool:
     case VulkanChunk::vkCreateDepthTargetView:
@@ -4001,12 +4028,29 @@ void WrappedVulkan::ReplayLog(uint32_t startEventID, uint32_t endEventID, Replay
       m_OutsideCmdBuffer = VK_NULL_HANDLE;
     }
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-    SubmitAndFlushImageStateBarriers(m_setupImageBarriers);
-    SubmitCmds();
-    FlushQ();
-    SubmitAndFlushImageStateBarriers(m_cleanupImageBarriers);
-#endif
+    if(Vulkan_Debug_SingleSubmitFlushing())
+    {
+      SubmitAndFlushImageStateBarriers(m_setupImageBarriers);
+      SubmitCmds();
+      FlushQ();
+      SubmitAndFlushImageStateBarriers(m_cleanupImageBarriers);
+    }
+  }
+
+  if(!IsStructuredExporting(m_State))
+  {
+    AddPendingObjectCleanup([this]() {
+      // destroy any events we created for waiting on
+      for(size_t i = 0; i < m_CleanupEvents.size(); i++)
+        ObjDisp(GetDev())->DestroyEvent(Unwrap(GetDev()), m_CleanupEvents[i], NULL);
+
+      m_CleanupEvents.clear();
+
+      for(const rdcpair<VkCommandPool, VkCommandBuffer> &rerecord : m_RerecordCmdList)
+        vkFreeCommandBuffers(GetDev(), rerecord.first, 1, &rerecord.second);
+
+      m_RerecordCmdList.clear();
+    });
   }
 
   VkMarkerRegion::Set("!!!!RenderDoc Internal: Done replay");
@@ -4256,8 +4300,8 @@ void WrappedVulkan::CheckErrorVkResult(VkResult vkr)
 
   if(vkr == VK_ERROR_INITIALIZATION_FAILED || vkr == VK_ERROR_DEVICE_LOST || vkr == VK_ERROR_UNKNOWN)
   {
-    SET_ERROR_RESULT(m_FatalError, ResultCode::ReplayDeviceLost,
-                     "Logging device lost fatal error for %s", ToStr(vkr).c_str());
+    SET_ERROR_RESULT(m_FatalError, ResultCode::DeviceLost, "Logging device lost fatal error for %s",
+                     ToStr(vkr).c_str());
     m_FailedReplayResult = m_FatalError;
   }
   else if(vkr == VK_ERROR_OUT_OF_HOST_MEMORY || vkr == VK_ERROR_OUT_OF_DEVICE_MEMORY)
@@ -4268,7 +4312,7 @@ void WrappedVulkan::CheckErrorVkResult(VkResult vkr)
     }
     else
     {
-      SET_ERROR_RESULT(m_FatalError, ResultCode::ReplayOutOfMemory,
+      SET_ERROR_RESULT(m_FatalError, ResultCode::OutOfMemory,
                        "Logging out of memory fatal error for %s", ToStr(vkr).c_str());
       m_FailedReplayResult = m_FatalError;
     }

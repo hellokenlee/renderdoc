@@ -643,6 +643,36 @@
     <ClCompile Include="d3d12\d3d12_vertex_uav.cpp">
       <Filter>D3D12\demos</Filter>
     </ClCompile>
+    <ClCompile Include="gl\gl_pixel_history.cpp">
+      <Filter>OpenGL\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d12\d3d12_map_placed_alias.cpp">
+      <Filter>D3D12\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_mem_bench.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="android\android_platform.cpp">
+      <Filter>Android</Filter>
+    </ClCompile>
+    <ClCompile Include="android\android_window.cpp">
+      <Filter>Android</Filter>
+    </ClCompile>
+    <ClCompile Include="gl\gl_test_android.cpp">
+      <Filter>OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="gl\gl_template.cpp">
+      <Filter>OpenGL\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="vk\vk_template.cpp">
+      <Filter>Vulkan\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d11\d3d11_template.cpp">
+      <Filter>D3D11\demos</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d12\d3d12_template.cpp">
+      <Filter>D3D12\demos</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="D3D11">
@@ -713,6 +743,9 @@
     </Filter>
     <Filter Include="3rdparty\md5">
       <UniqueIdentifier>{25327220-a428-4ea2-8894-300df4a61a33}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Android">
+      <UniqueIdentifier>{cd8bc334-25e7-40a0-99fb-fff5ccf33687}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -906,6 +939,12 @@
     </ClInclude>
     <ClInclude Include="3rdparty\md5\md5.h">
       <Filter>3rdparty\md5</Filter>
+    </ClInclude>
+    <ClInclude Include="android\android_platform.h">
+      <Filter>Android</Filter>
+    </ClInclude>
+    <ClInclude Include="android\android_window.h">
+      <Filter>Android</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -25,6 +25,7 @@
 #include <float.h>
 #include <math.h>
 #include <algorithm>
+#include "core/settings.h"
 #include "data/glsl_shaders.h"
 #include "driver/shaders/spirv/spirv_common.h"
 #include "driver/shaders/spirv/spirv_gen.h"
@@ -38,6 +39,8 @@
 
 #define VULKAN 1
 #include "data/glsl/glsl_ubos_cpp.h"
+
+RDOC_EXTERN_CONFIG(bool, Vulkan_Debug_SingleSubmitFlushing);
 
 struct VulkanQuadOverdrawCallback : public VulkanActionCallback
 {
@@ -1928,9 +1931,8 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
       vkr = vt->EndCommandBuffer(Unwrap(cmd));
       CheckVkResult(vkr);
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-      m_pDriver->SubmitCmds();
-#endif
+      if(Vulkan_Debug_SingleSubmitFlushing())
+        m_pDriver->SubmitCmds();
 
       size_t startEvent = 0;
 
@@ -2216,9 +2218,8 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
       vkr = vt->EndCommandBuffer(Unwrap(cmd));
       CheckVkResult(vkr);
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-      m_pDriver->SubmitCmds();
-#endif
+      if(Vulkan_Debug_SingleSubmitFlushing())
+        m_pDriver->SubmitCmds();
 
       m_pDriver->ReplayLog(0, events[0], eReplay_WithoutDraw);
 
@@ -2346,9 +2347,8 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
         vkr = vt->EndCommandBuffer(Unwrap(cmd));
         CheckVkResult(vkr);
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-        m_pDriver->SubmitCmds();
-#endif
+        if(Vulkan_Debug_SingleSubmitFlushing())
+          m_pDriver->SubmitCmds();
 
         rdcarray<uint32_t> events = passEvents;
 
@@ -2830,6 +2830,10 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
                 {
                   RDCERR("Vertex input dynamic state found, should have been stripped");
                 }
+                else if(d == VK_DYNAMIC_STATE_ATTACHMENT_FEEDBACK_LOOP_ENABLE_EXT)
+                {
+                  vt->CmdSetAttachmentFeedbackLoopEnableEXT(Unwrap(cmd), state.feedbackAspects);
+                }
               }
 
               if(fmt.indexByteStride)
@@ -2904,9 +2908,8 @@ ResourceId VulkanReplay::RenderOverlay(ResourceId texid, FloatVector clearCol, D
   vkr = vt->EndCommandBuffer(Unwrap(cmd));
   CheckVkResult(vkr);
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-  m_pDriver->SubmitCmds();
-#endif
+  if(Vulkan_Debug_SingleSubmitFlushing())
+    m_pDriver->SubmitCmds();
 
   return GetResID(m_Overlay.Image);
 }

@@ -121,6 +121,12 @@
   <ItemGroup>
     <ClCompile Include="3rdparty\fmt\format.cc" />
     <ClCompile Include="3rdparty\md5\md5.c" />
+    <ClCompile Include="android\android_platform.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="android\android_window.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="d3d11\d3d11_1_many_uavs.cpp" />
     <ClCompile Include="d3d11\d3d11_amd_shader_extensions.cpp" />
     <ClCompile Include="d3d11\d3d11_array_interpolator.cpp" />
@@ -170,6 +176,7 @@
     <ClCompile Include="d3d11\d3d11_structured_buffer_nested.cpp" />
     <ClCompile Include="d3d11\d3d11_structured_buffer_read.cpp" />
     <ClCompile Include="d3d11\d3d11_swapchain_zoo.cpp" />
+    <ClCompile Include="d3d11\d3d11_template.cpp" />
     <ClCompile Include="d3d11\d3d11_test.cpp" />
     <ClCompile Include="d3d11\d3d11_texture_3d.cpp" />
     <ClCompile Include="d3d11\d3d11_texture_zoo.cpp" />
@@ -191,6 +198,7 @@
     <ClCompile Include="d3d12\d3d12_leak_check.cpp" />
     <ClCompile Include="d3d12\d3d12_list_alloc_tests.cpp" />
     <ClCompile Include="d3d12\d3d12_list_types.cpp" />
+    <ClCompile Include="d3d12\d3d12_map_placed_alias.cpp" />
     <ClCompile Include="d3d12\d3d12_mesh_zoo.cpp" />
     <ClCompile Include="d3d12\d3d12_overlay_test.cpp" />
     <ClCompile Include="d3d12\d3d12_parameter_zoo.cpp" />
@@ -208,6 +216,7 @@
     <ClCompile Include="d3d12\d3d12_simple_dispatch.cpp" />
     <ClCompile Include="d3d12\d3d12_simple_triangle.cpp" />
     <ClCompile Include="d3d12\d3d12_swapchain_zoo.cpp" />
+    <ClCompile Include="d3d12\d3d12_template.cpp" />
     <ClCompile Include="d3d12\d3d12_test.cpp" />
     <ClCompile Include="d3d12\d3d12_texture_zoo.cpp" />
     <ClCompile Include="d3d12\d3d12_untyped_backbuffer_descriptor.cpp" />
@@ -262,8 +271,12 @@
     <ClCompile Include="gl\gl_spirv_shader.cpp" />
     <ClCompile Include="gl\gl_state_trashing.cpp" />
     <ClCompile Include="gl\gl_structured_buffer_nested.cpp" />
+    <ClCompile Include="gl\gl_template.cpp" />
     <ClCompile Include="gl\gl_test.cpp" />
     <ClCompile Include="gl\gl_test_linux.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="gl\gl_test_android.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="gl\gl_test_win32.cpp" />
@@ -272,6 +285,7 @@
     <ClCompile Include="gl\gl_unsized_ms_fbo_attachment.cpp" />
     <ClCompile Include="gl\gl_vao_0.cpp" />
     <ClCompile Include="gl\gl_vertex_attr_zoo.cpp" />
+    <ClCompile Include="gl\gl_pixel_history.cpp" />
     <ClCompile Include="linux\linux_platform.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
@@ -297,6 +311,7 @@
     <ClCompile Include="vk\vk_large_descriptor_sets.cpp" />
     <ClCompile Include="vk\vk_leak_check.cpp" />
     <ClCompile Include="vk\vk_load_store_none.cpp" />
+    <ClCompile Include="vk\vk_mem_bench.cpp" />
     <ClCompile Include="vk\vk_mesh_zoo.cpp" />
     <ClCompile Include="vk\vk_multi_entry.cpp" />
     <ClCompile Include="vk\vk_multi_present.cpp" />
@@ -319,6 +334,7 @@
     <ClCompile Include="vk\vk_spec_constants.cpp" />
     <ClCompile Include="vk\vk_spirv_13_shaders.cpp" />
     <ClCompile Include="vk\vk_sync2.cpp" />
+    <ClCompile Include="vk\vk_template.cpp" />
     <ClCompile Include="vk\vk_texture_zoo.cpp" />
     <ClCompile Include="vk\vk_triangle_fan.cpp" />
     <ClCompile Include="vk\vk_buffer_truncation.cpp" />
@@ -356,6 +372,12 @@
     <ClInclude Include="3rdparty\glad\khrplatform.h" />
     <ClInclude Include="3rdparty\md5\md5.h" />
     <ClInclude Include="3rdparty\VulkanMemoryAllocator\vk_mem_alloc.h" />
+    <ClInclude Include="android\android_platform.h">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClInclude>
+    <ClInclude Include="android\android_window.h">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClInclude>
     <ClInclude Include="d3d11\d3d11_helpers.h" />
     <ClInclude Include="d3d11\d3d11_test.h" />
     <ClInclude Include="d3d12\d3d12_helpers.h" />

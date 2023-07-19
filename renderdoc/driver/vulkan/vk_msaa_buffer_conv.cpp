@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2021 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,13 +30,14 @@
 #include "data/glsl/glsl_globals.h"
 #include "data/glsl/glsl_ubos_cpp.h"
 
-void VulkanDebugManager::CopyTex2DMSToBuffer(VkBuffer destBuffer, VkImage srcMS, VkExtent3D extent,
-                                             uint32_t baseSlice, uint32_t numSlices,
-                                             uint32_t baseSample, uint32_t numSamples, VkFormat fmt)
+void VulkanDebugManager::CopyTex2DMSToBuffer(VkCommandBuffer cmd, VkBuffer destBuffer,
+                                             VkImage srcMS, VkExtent3D extent, uint32_t baseSlice,
+                                             uint32_t numSlices, uint32_t baseSample,
+                                             uint32_t numSamples, VkFormat fmt)
 {
   if(IsDepthOrStencilFormat(fmt))
   {
-    CopyDepthTex2DMSToBuffer(destBuffer, srcMS, extent, baseSlice, numSlices, baseSample,
+    CopyDepthTex2DMSToBuffer(cmd, destBuffer, srcMS, extent, baseSlice, numSlices, baseSample,
                              numSamples, fmt);
     return;
   }
@@ -87,15 +88,21 @@ void VulkanDebugManager::CopyTex2DMSToBuffer(VkBuffer destBuffer, VkImage srcMS,
   CheckVkResult(vkr);
   NameUnwrappedVulkanObject(srcView, "MS -> Buffer srcView");
 
-  VkCommandBuffer cmd = VK_NULL_HANDLE;
   VkCommandBufferBeginInfo beginInfo = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, NULL,
                                         VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
-  cmd = m_pDriver->GetNextCmd();
+
+  bool endCommand = false;
+
+  if(cmd == VK_NULL_HANDLE)
+  {
+    cmd = m_pDriver->GetNextCmd();
+    if(cmd != VK_NULL_HANDLE)
+      ObjDisp(cmd)->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
+    endCommand = true;
+  }
 
   if(cmd == VK_NULL_HANDLE)
     return;
-
-  ObjDisp(cmd)->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
 
   {
     VkMarkerRegion region(cmd, "CopyTex2DMSToBuffer");
@@ -117,18 +124,20 @@ void VulkanDebugManager::CopyTex2DMSToBuffer(VkBuffer destBuffer, VkImage srcMS,
     destdesc.offset = 0;
     destdesc.range = VK_WHOLE_SIZE;
 
+    VkDescriptorSet descSet = GetBufferMSDescSet();
+
     VkWriteDescriptorSet writeSet[] = {
-        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(m_BufferMSDescSet), 0, 0, 1,
+        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(descSet), 0, 0, 1,
          VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &srcdesc, NULL, NULL},
-        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(m_BufferMSDescSet), 2, 0, 1,
+        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(descSet), 2, 0, 1,
          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL, &destdesc, NULL},
     };
 
     ObjDisp(dev)->UpdateDescriptorSets(Unwrap(dev), ARRAY_COUNT(writeSet), writeSet, 0, NULL);
 
     ObjDisp(cmd)->CmdBindDescriptorSets(Unwrap(cmd), VK_PIPELINE_BIND_POINT_COMPUTE,
-                                        Unwrap(m_BufferMSPipeLayout), 0, 1,
-                                        UnwrapPtr(m_BufferMSDescSet), 0, NULL);
+                                        Unwrap(m_BufferMSPipeLayout), 0, 1, UnwrapPtr(descSet), 0,
+                                        NULL);
 
     for(uint32_t currentSlice = baseSlice; currentSlice < numSlices + baseSlice; currentSlice++)
     {
@@ -157,23 +166,21 @@ void VulkanDebugManager::CopyTex2DMSToBuffer(VkBuffer destBuffer, VkImage srcMS,
       }
     }
   }
-  ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
 
-  cmd = VK_NULL_HANDLE;
+  if(endCommand)
+    ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
 
-  // submit cmds and wait for idle so we can readback
-  m_pDriver->SubmitCmds();
-  m_pDriver->FlushQ();
-
-  RDCASSERT(cmd == VK_NULL_HANDLE);
-
-  ObjDisp(dev)->DestroyImageView(Unwrap(dev), srcView, NULL);
+  m_pDriver->AddPendingObjectCleanup([this, dev, srcView]() {
+    ObjDisp(dev)->DestroyImageView(Unwrap(dev), srcView, NULL);
+    ResetBufferMSDescriptorPools();
+  });
 }
 
-void VulkanDebugManager::CopyDepthTex2DMSToBuffer(VkBuffer destBuffer, VkImage srcMS,
-                                                  VkExtent3D extent, uint32_t baseSlice,
-                                                  uint32_t numSlices, uint32_t baseSample,
-                                                  uint32_t numSamples, VkFormat fmt)
+void VulkanDebugManager::CopyDepthTex2DMSToBuffer(VkCommandBuffer cmd, VkBuffer destBuffer,
+                                                  VkImage srcMS, VkExtent3D extent,
+                                                  uint32_t baseSlice, uint32_t numSlices,
+                                                  uint32_t baseSample, uint32_t numSamples,
+                                                  VkFormat fmt)
 {
   if(m_DepthMS2BufferPipe == VK_NULL_HANDLE)
     return;
@@ -196,6 +203,10 @@ void VulkanDebugManager::CopyDepthTex2DMSToBuffer(VkBuffer destBuffer, VkImage s
     case VK_FORMAT_D32_SFLOAT_S8_UINT:
       fmtIndex = SHADER_D32_SFLOAT_S8_UINT;
       aspectFlags |= VK_IMAGE_ASPECT_STENCIL_BIT;
+      break;
+    case VK_FORMAT_S8_UINT:
+      fmtIndex = SHADER_S8_UINT;
+      aspectFlags = VK_IMAGE_ASPECT_STENCIL_BIT;
       break;
     default: RDCERR("Unexpected depth format: %d", fmt); return;
   }
@@ -220,9 +231,12 @@ void VulkanDebugManager::CopyDepthTex2DMSToBuffer(VkBuffer destBuffer, VkImage s
       },
   };
 
-  vkr = ObjDisp(dev)->CreateImageView(Unwrap(dev), &viewInfo, NULL, &srcDepthView);
-  CheckVkResult(vkr);
-  NameUnwrappedVulkanObject(srcDepthView, "Depth MS -> Array srcDepthView");
+  if(aspectFlags & VK_IMAGE_ASPECT_DEPTH_BIT)
+  {
+    vkr = ObjDisp(dev)->CreateImageView(Unwrap(dev), &viewInfo, NULL, &srcDepthView);
+    CheckVkResult(vkr);
+    NameUnwrappedVulkanObject(srcDepthView, "Depth MS -> Array srcDepthView");
+  }
 
   if(aspectFlags & VK_IMAGE_ASPECT_STENCIL_BIT)
   {
@@ -232,16 +246,21 @@ void VulkanDebugManager::CopyDepthTex2DMSToBuffer(VkBuffer destBuffer, VkImage s
     NameUnwrappedVulkanObject(srcStencilView, "Depth MS -> Array srcStencilView");
   }
 
-  VkCommandBuffer cmd = VK_NULL_HANDLE;
   VkCommandBufferBeginInfo beginInfo = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, NULL,
                                         VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
 
-  cmd = m_pDriver->GetNextCmd();
+  bool endCommand = false;
+
+  if(cmd == VK_NULL_HANDLE)
+  {
+    cmd = m_pDriver->GetNextCmd();
+    if(cmd != VK_NULL_HANDLE)
+      ObjDisp(cmd)->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
+    endCommand = true;
+  }
 
   if(cmd == VK_NULL_HANDLE)
     return;
-
-  ObjDisp(cmd)->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
 
   ObjDisp(cmd)->CmdBindPipeline(Unwrap(cmd), VK_PIPELINE_BIND_POINT_COMPUTE,
                                 Unwrap(m_DepthMS2BufferPipe));
@@ -253,6 +272,21 @@ void VulkanDebugManager::CopyDepthTex2DMSToBuffer(VkBuffer destBuffer, VkImage s
   srcdesc[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   srcdesc[1].imageView = srcStencilView;
   srcdesc[1].sampler = VK_NULL_HANDLE;    // not used - we use texelFetch
+
+  if((aspectFlags & VK_IMAGE_ASPECT_DEPTH_BIT) == 0)
+  {
+    if(m_DummyDepthView != VK_NULL_HANDLE)
+    {
+      srcdesc[0].imageView = Unwrap(m_DummyDepthView);
+    }
+    else
+    {
+      // as a last fallback, hope that setting an incompatible view (float not int) will not break
+      // too badly. This only gets hit when the implementation has such poor format support that
+      // there are no float formats that can be sampled as MSAA.
+      srcdesc[0].imageView = srcStencilView;
+    }
+  }
 
   if((aspectFlags & VK_IMAGE_ASPECT_STENCIL_BIT) == 0)
   {
@@ -277,27 +311,30 @@ void VulkanDebugManager::CopyDepthTex2DMSToBuffer(VkBuffer destBuffer, VkImage s
   destdesc.offset = 0;
   destdesc.range = VK_WHOLE_SIZE;
 
+  VkDescriptorSet descSet = GetBufferMSDescSet();
+
   VkWriteDescriptorSet writeSet[] = {
-      {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(m_BufferMSDescSet), 0, 0, 1,
+      {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(descSet), 0, 0, 1,
        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &srcdesc[0], NULL, NULL},
-      {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(m_BufferMSDescSet), 1, 0, 1,
+      {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(descSet), 1, 0, 1,
        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &srcdesc[1], NULL, NULL},
-      {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(m_BufferMSDescSet), 2, 0, 1,
+      {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(descSet), 2, 0, 1,
        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL, &destdesc, NULL},
   };
 
   ObjDisp(dev)->UpdateDescriptorSets(Unwrap(dev), ARRAY_COUNT(writeSet), writeSet, 0, NULL);
 
   ObjDisp(cmd)->CmdBindDescriptorSets(Unwrap(cmd), VK_PIPELINE_BIND_POINT_COMPUTE,
-                                      Unwrap(m_BufferMSPipeLayout), 0, 1,
-                                      UnwrapPtr(m_BufferMSDescSet), 0, NULL);
+                                      Unwrap(m_BufferMSPipeLayout), 0, 1, UnwrapPtr(descSet), 0,
+                                      NULL);
 
   for(uint32_t currentSlice = baseSlice; currentSlice < numSlices + baseSlice; currentSlice++)
   {
     for(uint32_t currentSample = baseSample; currentSample < numSamples + baseSample; currentSample++)
     {
-      // for D16 textures, we need to multisample.
-      const uint32_t msDivider = fmt == VK_FORMAT_D16_UNORM ? 2 : 1;
+      // for D16 and S8 textures, we need to multisample.
+      const uint32_t msDivider =
+          (fmt == VK_FORMAT_D16_UNORM) ? 2 : (fmt == VK_FORMAT_S8_UINT) ? 4 : 1;
       const uint32_t workGroupDivider = MS_DISPATCH_LOCAL_SIZE * msDivider;
       const uint32_t numWorkGroup =
           AlignUp(extent.width * extent.height, workGroupDivider) / workGroupDivider;
@@ -316,19 +353,16 @@ void VulkanDebugManager::CopyDepthTex2DMSToBuffer(VkBuffer destBuffer, VkImage s
     }
   }
 
-  ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
+  if(endCommand)
+    ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
 
-  cmd = VK_NULL_HANDLE;
-
-  // submit cmds and wait for idle so we can readback
-  m_pDriver->SubmitCmds();
-  m_pDriver->FlushQ();
-
-  RDCASSERT(cmd == VK_NULL_HANDLE);
-
-  ObjDisp(dev)->DestroyImageView(Unwrap(dev), srcDepthView, NULL);
-  if(srcStencilView != VK_NULL_HANDLE)
-    ObjDisp(dev)->DestroyImageView(Unwrap(dev), srcStencilView, NULL);
+  m_pDriver->AddPendingObjectCleanup([this, dev, srcDepthView, srcStencilView]() {
+    if(srcDepthView != VK_NULL_HANDLE)
+      ObjDisp(dev)->DestroyImageView(Unwrap(dev), srcDepthView, NULL);
+    if(srcStencilView != VK_NULL_HANDLE)
+      ObjDisp(dev)->DestroyImageView(Unwrap(dev), srcStencilView, NULL);
+    ResetBufferMSDescriptorPools();
+  });
 }
 
 void VulkanDebugManager::CopyBufferToTex2DMS(VkCommandBuffer cmd, VkImage destMS,
@@ -407,6 +441,8 @@ void VulkanDebugManager::CopyBufferToTex2DMS(VkCommandBuffer cmd, VkImage destMS
   if(cmd == VK_NULL_HANDLE)
     return;
 
+  VkDescriptorSet descSet = GetBufferMSDescSet();
+
   {
     VkMarkerRegion region(cmd, "CopyBufferToTex2DMS");
 
@@ -428,17 +464,17 @@ void VulkanDebugManager::CopyBufferToTex2DMS(VkCommandBuffer cmd, VkImage destMS
     destdesc.sampler = VK_NULL_HANDLE;
 
     VkWriteDescriptorSet writeSet[] = {
-        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(m_BufferMSDescSet), 2, 0, 1,
+        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(descSet), 2, 0, 1,
          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL, &srcdesc, NULL},
-        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(m_BufferMSDescSet), 3, 0, 1,
+        {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(descSet), 3, 0, 1,
          VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &destdesc, NULL, NULL},
     };
 
     ObjDisp(dev)->UpdateDescriptorSets(Unwrap(dev), ARRAY_COUNT(writeSet), writeSet, 0, NULL);
 
     ObjDisp(cmd)->CmdBindDescriptorSets(Unwrap(cmd), VK_PIPELINE_BIND_POINT_COMPUTE,
-                                        Unwrap(m_BufferMSPipeLayout), 0, 1,
-                                        UnwrapPtr(m_BufferMSDescSet), 0, NULL);
+                                        Unwrap(m_BufferMSPipeLayout), 0, 1, UnwrapPtr(descSet), 0,
+                                        NULL);
 
     for(uint32_t currentSlice = 0; currentSlice < numSlices; currentSlice++)
     {
@@ -468,8 +504,10 @@ void VulkanDebugManager::CopyBufferToTex2DMS(VkCommandBuffer cmd, VkImage destMS
   if(endCommand)
     ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
 
-  m_pDriver->AddPendingObjectCleanup(
-      [dev, destView]() { ObjDisp(dev)->DestroyImageView(Unwrap(dev), destView, NULL); });
+  m_pDriver->AddPendingObjectCleanup([this, dev, destView]() {
+    ObjDisp(dev)->DestroyImageView(Unwrap(dev), destView, NULL);
+    ResetBufferMSDescriptorPools();
+  });
 }
 
 void VulkanDebugManager::CopyDepthBufferToTex2DMS(VkCommandBuffer cmd, VkImage destMS,
@@ -509,6 +547,11 @@ void VulkanDebugManager::CopyDepthBufferToTex2DMS(VkCommandBuffer cmd, VkImage d
       pipeIndex = 5;
       aspectFlags |= VK_IMAGE_ASPECT_STENCIL_BIT;
       formatIndex = SHADER_D32_SFLOAT_S8_UINT;
+      break;
+    case VK_FORMAT_S8_UINT:
+      pipeIndex = 6;
+      aspectFlags = VK_IMAGE_ASPECT_STENCIL_BIT;
+      formatIndex = SHADER_S8_UINT;
       break;
     default: RDCERR("Unexpected depth format: %d", fmt); return;
   }
@@ -563,8 +606,10 @@ void VulkanDebugManager::CopyDepthBufferToTex2DMS(VkCommandBuffer cmd, VkImage d
     NameUnwrappedVulkanObject(destView[i], "Depth Array -> MS destView[i]");
   }
 
+  VkDescriptorSet descSet = GetBufferMSDescSet();
+
   VkWriteDescriptorSet writeSet[] = {
-      {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(m_BufferMSDescSet), 2, 0, 1,
+      {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, Unwrap(descSet), 2, 0, 1,
        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL, &srcdesc, NULL},
   };
 
@@ -672,8 +717,8 @@ void VulkanDebugManager::CopyDepthBufferToTex2DMS(VkCommandBuffer cmd, VkImage d
       ObjDisp(cmd)->CmdBeginRenderPass(Unwrap(cmd), &rpbegin, VK_SUBPASS_CONTENTS_INLINE);
 
       ObjDisp(cmd)->CmdBindDescriptorSets(Unwrap(cmd), VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                          Unwrap(m_BufferMSPipeLayout), 0, 1,
-                                          UnwrapPtr(m_BufferMSDescSet), 0, NULL);
+                                          Unwrap(m_BufferMSPipeLayout), 0, 1, UnwrapPtr(descSet), 0,
+                                          NULL);
 
       VkViewport viewport = {0.0f, 0.0f, (float)extent.width, (float)extent.height, 0.0f, 1.0f};
       ObjDisp(cmd)->CmdSetViewport(Unwrap(cmd), 0, 1, &viewport);
@@ -697,12 +742,14 @@ void VulkanDebugManager::CopyDepthBufferToTex2DMS(VkCommandBuffer cmd, VkImage d
   if(endCommand)
     ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
 
-  m_pDriver->AddPendingObjectCleanup([dev, fb, rp, destView]() {
+  m_pDriver->AddPendingObjectCleanup([this, dev, fb, rp, destView]() {
     for(uint32_t i = 0; i < fb.size(); i++)
       ObjDisp(dev)->DestroyFramebuffer(Unwrap(dev), fb[i], NULL);
     ObjDisp(dev)->DestroyRenderPass(Unwrap(dev), rp, NULL);
 
     for(uint32_t i = 0; i < destView.size(); i++)
       ObjDisp(dev)->DestroyImageView(Unwrap(dev), destView[i], NULL);
+
+    ResetBufferMSDescriptorPools();
   });
 }

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -291,6 +291,7 @@ public:
 
   bool Finished() const;
 
+  void PrepareInitial(ShaderDebugState &initial);
   void StepNext(ShaderDebugState *state, DebugAPIWrapper *apiWrapper,
                 const rdcarray<ThreadState> &prevWorkgroup);
 

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -181,8 +181,9 @@ int GetCurrentPID(const rdcstr &deviceID, const rdcstr &processName)
     RDCLOG("Getting PID from device %s for process '%s'", deviceID.c_str(), processName.c_str());
   }
 
-  // try 5 times, 200ms apart to find the pid
-  for(int i = 0; i < 5; i++)
+  // try 15 times, 200ms apart to find the pid, for a total of 3 seconds timeout waiting for the
+  // process to even be alive
+  for(int i = 0; i < 15; i++)
   {
     Process::ProcessResult pidOutput =
         adbExecCommand(deviceID, StringFormat::Fmt("shell ps -A | grep %s", processName.c_str()));
@@ -893,10 +894,14 @@ struct AndroidController : public IDeviceProtocolHandler
 
       cmd->meth();
 
-      Atomic::Inc32(&cmd->done);
-
       if(cmd->selfdelete)
+      {
         delete cmd;
+      }
+      else
+      {
+        Atomic::Inc32(&cmd->done);
+      }
     }
   }
 
@@ -1094,7 +1099,7 @@ struct AndroidController : public IDeviceProtocolHandler
     });
 
     // allow the package to start and begin listening before we return
-    Threading::Sleep(1500);
+    Threading::Sleep(8000);
 
     return result;
   }

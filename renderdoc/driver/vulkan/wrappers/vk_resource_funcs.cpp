@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -28,7 +28,7 @@
 #include "core/settings.h"
 
 RDOC_CONFIG(bool, Vulkan_GPUReadbackDeviceLocal, true,
-            "When reading back mapped device-local memory from discrete GPUs, use a GPU copy "
+            "When reading back mapped device-local memory, use a GPU copy "
             "instead of a CPU side comparison directly to mapped memory.");
 
 /************************************************************************
@@ -686,16 +686,25 @@ VkResult WrappedVulkan::vkAllocateMemory(VkDevice device, const VkMemoryAllocate
       {
         record->memMapState->mapCoherent = (memProps & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
 
-        // only mark this memory as needing readback on the GPU if it's device-local on a discrete
-        // GPU. On non-discrete GPUs we assume the CPU can access the memory at a good speed, and on
-        // discrete GPUs where the memory isn't device local it's CPU side so of course it's fast to
-        // access. Only in this case do we want to push the memory from the GPU to the CPU with a
-        // command buffer.
-        if(Vulkan_GPUReadbackDeviceLocal() &&
-           m_PhysicalDeviceData.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+        // some types of memory are faster to readback via a synchronous call to the GPU
+        if(Vulkan_GPUReadbackDeviceLocal())
         {
-          record->memMapState->readbackOnGPU =
-              ((memProps & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0);
+          // on discrete GPUs, all device local memory should be readback this way
+          if(m_PhysicalDeviceData.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+            record->memMapState->readbackOnGPU =
+                (memProps & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
+
+          // non-cached memory are generally always faster to readback on the GPU. Some GPUs allow
+          // faster readback via non-temporal loads but GPU copy speeds are comparable enough
+          record->memMapState->readbackOnGPU = ((memProps & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) == 0);
+
+#if ENABLED(RDOC_ANDROID)
+          // on Android all memory types are marked as device local. Types which are fast to read
+          // back directly from the CPU are CACHED but *not* COHERENT. Any types which are either
+          // only COHERENT, or are both CACHED and COHERENT, are still faster to readback via GPU
+          // copy.
+          record->memMapState->readbackOnGPU = (memProps & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+#endif
 
           // we need a wholeMemBuf to readback on the GPU
           if(record->memMapState->readbackOnGPU && wholeMemBuf == VK_NULL_HANDLE)
@@ -1154,10 +1163,13 @@ bool WrappedVulkan::Serialise_vkFlushMappedMemoryRanges(SerialiserType &ser, VkD
       {
         if(IsLoading(m_State))
         {
-          AddDebugMessage(MessageCategory::Performance, MessageSeverity::Medium,
-                          MessageSource::GeneralPerformance,
-                          "Unmapped memory overlaps tiled-only memory region. "
-                          "Taking slow path to mask tiled memory writes");
+          AddDebugMessage(
+              MessageCategory::Performance, MessageSeverity::Medium,
+              MessageSource::GeneralPerformance,
+              StringFormat::Fmt(
+                  "Unmapped memory %s overlaps tiled-only memory region. "
+                  "Taking slow path to mask tiled memory writes",
+                  ToStr(GetResourceManager()->GetOriginalID(GetResID(MemRange.memory))).c_str()));
         }
         directStream = false;
         m_MaskedMapData.resize((size_t)memRangeSize);
@@ -1215,7 +1227,23 @@ bool WrappedVulkan::Serialise_vkFlushMappedMemoryRanges(SerialiserType &ser, VkD
   }
 
   if(IsReplayingAndReading() && MappedData && MemRange.memory != VK_NULL_HANDLE && MemRange.size > 0)
+  {
+    const VulkanCreationInfo::Memory &memInfo = m_CreationInfo.m_Memory[GetResID(MemRange.memory)];
+    if((m_PhysicalDeviceData.memProps.memoryTypes[memInfo.memoryTypeIndex].propertyFlags &
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0)
+    {
+      VkMappedMemoryRange range = {
+          VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+          NULL,
+          Unwrap(MemRange.memory),
+          MemRange.offset,
+          MemRange.size,
+      };
+
+      ObjDisp(device)->FlushMappedMemoryRanges(Unwrap(device), 1, &range);
+    }
     ObjDisp(device)->UnmapMemory(Unwrap(device), Unwrap(MemRange.memory));
+  }
 
   SERIALISE_CHECK_READ_ERRORS();
 
@@ -1627,7 +1655,7 @@ bool WrappedVulkan::Serialise_vkCreateBuffer(SerialiserType &ser, VkDevice devic
     CreateInfo.usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
     // remap the queue family indices
-    if(CreateInfo.sharingMode == VK_SHARING_MODE_EXCLUSIVE)
+    if(CreateInfo.sharingMode == VK_SHARING_MODE_CONCURRENT)
     {
       uint32_t *queueFamiles = (uint32_t *)CreateInfo.pQueueFamilyIndices;
       for(uint32_t q = 0; q < CreateInfo.queueFamilyIndexCount; q++)
@@ -2030,7 +2058,7 @@ bool WrappedVulkan::Serialise_vkCreateImage(SerialiserType &ser, VkDevice device
     CreateInfo.usage &= ~VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
 
     // remap the queue family indices
-    if(CreateInfo.sharingMode == VK_SHARING_MODE_EXCLUSIVE)
+    if(CreateInfo.sharingMode == VK_SHARING_MODE_CONCURRENT)
     {
       uint32_t *queueFamiles = (uint32_t *)CreateInfo.pQueueFamilyIndices;
       for(uint32_t q = 0; q < CreateInfo.queueFamilyIndexCount; q++)

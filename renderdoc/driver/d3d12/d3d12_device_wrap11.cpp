@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2021-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,11 +22,39 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
-#pragma once
+#include "d3d12_device.h"
+#include "driver/dxgi/dxgi_common.h"
+#include "d3d12_command_queue.h"
+#include "d3d12_resources.h"
 
-#include "api/app/renderdoc_app.h"
-#include "api/replay/renderdoc_replay.h"
-#include "common/common.h"
-#include "os/os_specific.h"
+void WrappedID3D12Device::CreateSampler2(const D3D12_SAMPLER_DESC2 *pDesc,
+                                         D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor)
+{
+  bool capframe = false;
 
-#include "d3d9_common.h"
+  {
+    SCOPED_READLOCK(m_CapTransitionLock);
+    capframe = IsActiveCapturing(m_State);
+  }
+
+  SERIALISE_TIME_CALL(m_pDevice11->CreateSampler2(pDesc, Unwrap(DestDescriptor)));
+
+  // assume descriptors are volatile
+  if(capframe)
+  {
+    DynamicDescriptorWrite write;
+    write.desc.Init(pDesc);
+    write.dest = GetWrapped(DestDescriptor);
+
+    {
+      CACHE_THREAD_SERIALISER();
+
+      SCOPED_SERIALISE_CHUNK(D3D12Chunk::Device_CreateSampler2);
+      Serialise_DynamicDescriptorWrite(ser, &write);
+
+      m_FrameCaptureRecord->AddChunk(scope.Get());
+    }
+  }
+
+  GetWrapped(DestDescriptor)->Init(pDesc);
+}

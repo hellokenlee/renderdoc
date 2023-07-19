@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,53 +22,49 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
-#pragma once
+#include "d3d12_test.h"
 
-#include <map>
-#include "driver/dx/official/d3d9.h"
-#include "stb/stb_truetype.h"
-#include "d3d9_common.h"
-#include "d3d9_device.h"
-
-class D3D9DebugManager
+RD_TEST(D3D12_Template, D3D12GraphicsTest)
 {
-public:
-  D3D9DebugManager(WrappedD3DDevice9 *wrapper);
-  ~D3D9DebugManager();
+  static constexpr const char *Description = "Blank test template to be copied & modified.";
 
-  void RenderText(float x, float y, const rdcstr &text);
-
-  void SetOutputDimensions(int w, int h)
+  int main()
   {
-    m_width = w;
-    m_height = h;
+    // initialise, create window, create device, etc
+    if(!Init())
+      return 3;
+
+    while(Running())
+    {
+      ID3D12GraphicsCommandListPtr cmd = GetCommandBuffer();
+
+      Reset(cmd);
+
+      ID3D12ResourcePtr bb = StartUsingBackbuffer(cmd, D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+      ClearRenderTargetView(cmd, BBRTV, {0.2f, 0.2f, 0.2f, 1.0f});
+
+      cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+      IASetVertexBuffer(cmd, DefaultTriVB, sizeof(DefaultA2V), 0);
+      cmd->SetPipelineState(DefaultTriPSO);
+      cmd->SetGraphicsRootSignature(DefaultTriSig);
+
+      SetMainWindowViewScissor(cmd);
+
+      OMSetRenderTargets(cmd, {BBRTV}, {});
+
+      cmd->DrawInstanced(3, 1, 0, 0);
+
+      FinishUsingBackbuffer(cmd, D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+      cmd->Close();
+
+      SubmitAndPresent({cmd});
+    }
+
+    return 0;
   }
-  void SetOutputWindow(HWND w);
-
-  // font/text rendering
-  bool InitFontRendering();
-  void ShutdownFontRendering();
-
-  void RenderTextInternal(float x, float y, const rdcstr &text);
-
-  static const int FONT_TEX_WIDTH = 256;
-  static const int FONT_TEX_HEIGHT = 128;
-  static const int FONT_MAX_CHARS = 256;
-
-  static const uint32_t STAGE_BUFFER_BYTE_SIZE = 4 * 1024 * 1024;
-
-  struct FontData
-  {
-    FontData() { RDCEraseMem(this, sizeof(FontData)); }
-    ~FontData() { SAFE_RELEASE(Tex); }
-    IDirect3DTexture9 *Tex;
-    stbtt_bakedchar charData[FONT_MAX_CHARS];
-    float maxHeight;
-  } m_Font;
-
-  DWORD m_fvf;
-
-  int m_width = 0;
-  int m_height = 0;
-  WrappedD3DDevice9 *m_WrappedDevice;
 };
+
+REGISTER_TEST();

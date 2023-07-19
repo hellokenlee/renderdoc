@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -312,6 +312,9 @@ private:
   rdcarray<DebugMessage> GetDebugMessages();
   void AddDebugMessage(DebugMessage msg);
 
+  bool m_CaptureFailure = false;
+  uint64_t m_LastCaptureFailed = 0;
+  RDResult m_LastCaptureError = ResultCode::Succeeded;
   int m_OOMHandler = 0;
   RDResult m_FatalError = ResultCode::Succeeded;
   CaptureState m_State;
@@ -444,6 +447,7 @@ private:
   bool m_FragmentShadingRate = false;
   bool m_DynColorWrite = false;
   bool m_DynVertexInput = false;
+  bool m_DynAttachmentLoop = false;
 
   PFN_vkSetDeviceLoaderData m_SetDeviceLoaderData;
 
@@ -574,6 +578,12 @@ private:
 
   static const int initialStateMaxBatch = 100;
   int initStateCurBatch = 0;
+
+  bool m_PrepareInitStateBatching = false;
+  // list of resources which have been prepared but haven't been serialised
+  rdcarray<ResourceId> m_PreparedNotSerialisedInitStates;
+
+  rdcarray<rdcstr> m_InitTempFiles;
   VkCommandBuffer initStateCurCmd = VK_NULL_HANDLE;
   rdcarray<std::function<void()>> m_PendingCleanups;
 
@@ -583,12 +593,15 @@ private:
   // all 'base' allocations. The offset is used to indicate the current offset, and the size is the
   // total size, thus the free space can be determined with size - offset.
   rdcarray<MemoryAllocation> m_MemoryBlocks[arraydim<MemoryScope>()];
+  Threading::ThreadHandle m_MemoryFreeThread = 0;
 
   // Per memory scope, the size of the next allocation. This allows us to balance number of memory
   // allocation objects with size by incrementally allocating larger blocks.
   VkDeviceSize m_MemoryBlockSize[arraydim<MemoryScope>()] = {};
 
   void FreeAllMemory(MemoryScope scope);
+  uint64_t CurMemoryUsage(MemoryScope scope);
+  void ResetMemoryBlocks(MemoryScope scope);
   void FreeMemoryAllocation(MemoryAllocation alloc);
 
   // internal implementation - call one of the functions above
@@ -1067,6 +1080,13 @@ public:
     return it->second.state;
   }
 
+  uint32_t RemapQueue(uint32_t q)
+  {
+    if(q >= ARRAY_COUNT(m_QueueRemapping) || m_QueueRemapping[q].empty())
+      return q;
+    return m_QueueRemapping[q][0].family;
+  }
+
   static rdcstr GetChunkName(uint32_t idx);
   VulkanResourceManager *GetResourceManager() { return m_ResourceManager; }
   VulkanDebugManager *GetDebugManager() { return m_DebugManager; }
@@ -1074,6 +1094,8 @@ public:
   CaptureState GetState() { return m_State; }
   VulkanReplay *GetReplay() { return m_Replay; }
   // replay interface
+  void Begin_PrepareInitialBatch();
+  void End_PrepareInitialBatch();
   bool Prepare_InitialState(WrappedVkRes *res);
   uint64_t GetSize_InitialState(ResourceId id, const VkInitialContents &initial);
   template <typename SerialiserType>
@@ -1199,6 +1221,7 @@ public:
   bool FragmentShadingRate() const { return m_FragmentShadingRate; }
   bool DynamicColorWrite() const { return m_DynColorWrite; }
   bool DynamicVertexInput() const { return m_DynVertexInput; }
+  bool DynamicAttachmentLoop() const { return m_DynAttachmentLoop; }
   VulkanRenderState &GetRenderState() { return m_RenderState; }
   void SetActionCB(VulkanActionCallback *cb) { m_ActionCallback = cb; }
   void SetSubmitChain(void *submitChain) { m_SubmitChain = submitChain; }
@@ -2612,4 +2635,8 @@ public:
   // VK_EXT_swapchain_maintenance1
   VkResult vkReleaseSwapchainImagesEXT(VkDevice device,
                                        const VkReleaseSwapchainImagesInfoEXT *pReleaseInfo);
+
+  // VK_EXT_attachment_feedback_loop_dynamic_state
+  IMPLEMENT_FUNCTION_SERIALISED(void, vkCmdSetAttachmentFeedbackLoopEnableEXT,
+                                VkCommandBuffer commandBuffer, VkImageAspectFlags aspectMask);
 };

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -471,6 +471,17 @@ void rdclog_direct(time_t utcTime, uint32_t pid, LogType type, const char *proje
     output += numWritten;
 
     va_end(args2);
+  }
+
+  // normalise newlines
+  {
+    char *nl = base;
+    while(*nl)
+    {
+      if(*nl == '\r')
+        *nl = '\n';
+      nl++;
+    }
   }
 
   // likely path - string contains no newlines

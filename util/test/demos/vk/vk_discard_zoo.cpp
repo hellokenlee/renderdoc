@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -550,6 +550,10 @@ void main()
         TEX_TEST("DiscardAll", MakeTex2D(VK_FORMAT_S8_UINT, 300, 300, 1, 4));
         DiscardImage(cmd, tex);
         TEX_TEST("DiscardAll", MakeTex2D(VK_FORMAT_S8_UINT, 300, 300, 5, 4));
+        DiscardImage(cmd, tex);
+        TEX_TEST("DiscardAll", MakeTex2DMS(VK_FORMAT_S8_UINT, 300, 300, 4));
+        DiscardImage(cmd, tex);
+        TEX_TEST("DiscardAll", MakeTex2DMS(VK_FORMAT_S8_UINT, 300, 300, 4, 2));
         DiscardImage(cmd, tex);
       }
 

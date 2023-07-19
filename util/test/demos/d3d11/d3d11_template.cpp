@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,4 +22,40 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
-#include "precompiled.h"
+#include "d3d11_test.h"
+
+RD_TEST(D3D11_Template, D3D11GraphicsTest)
+{
+  static constexpr const char *Description = "Blank test template to be copied & modified.";
+
+  int main()
+  {
+    // initialise, create window, create device, etc
+    if(!Init())
+      return 3;
+
+    while(Running())
+    {
+      ClearRenderTargetView(bbRTV, {0.2f, 0.2f, 0.2f, 1.0f});
+
+      IASetVertexBuffer(DefaultTriVB, sizeof(DefaultA2V), 0);
+      ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+      ctx->IASetInputLayout(defaultLayout);
+
+      ctx->VSSetShader(DefaultTriVS, NULL, 0);
+      ctx->PSSetShader(DefaultTriPS, NULL, 0);
+
+      RSSetViewport({0.0f, 0.0f, (float)screenWidth, (float)screenHeight, 0.0f, 1.0f});
+
+      ctx->OMSetRenderTargets(1, &bbRTV.GetInterfacePtr(), NULL);
+
+      ctx->Draw(3, 0);
+
+      Present();
+    }
+
+    return 0;
+  }
+};
+
+REGISTER_TEST();

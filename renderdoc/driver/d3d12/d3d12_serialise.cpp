@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -172,6 +172,25 @@ void DoSerialise(SerialiserType &ser, D3D12_STATIC_SAMPLER_DESC &el)
   SERIALISE_MEMBER(ShaderRegister);
   SERIALISE_MEMBER(RegisterSpace);
   SERIALISE_MEMBER(ShaderVisibility);
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_STATIC_SAMPLER_DESC1 &el)
+{
+  SERIALISE_MEMBER(Filter);
+  SERIALISE_MEMBER(AddressU);
+  SERIALISE_MEMBER(AddressV);
+  SERIALISE_MEMBER(AddressW);
+  SERIALISE_MEMBER(MipLODBias);
+  SERIALISE_MEMBER(MaxAnisotropy);
+  SERIALISE_MEMBER(ComparisonFunc);
+  SERIALISE_MEMBER(BorderColor);
+  SERIALISE_MEMBER(MinLOD);
+  SERIALISE_MEMBER(MaxLOD);
+  SERIALISE_MEMBER(ShaderRegister);
+  SERIALISE_MEMBER(RegisterSpace);
+  SERIALISE_MEMBER(ShaderVisibility);
+  SERIALISE_MEMBER(Flags);
 }
 
 template <class SerialiserType>
@@ -363,7 +382,13 @@ void DoSerialise(SerialiserType &ser, D3D12Descriptor &el)
   {
     case D3D12DescriptorType::Sampler:
     {
-      ser.Serialise("Descriptor"_lit, el.data.samp.desc);
+      // special case because of squeezed descriptor
+      D3D12_SAMPLER_DESC2 desc;
+      if(ser.IsWriting() || ser.IsStructurising())
+        desc = el.data.samp.desc.AsDesc();
+      ser.Serialise("Descriptor"_lit, desc);
+      if(ser.IsReading() && !ser.IsStructurising())
+        el.data.samp.desc.Init(desc);
       RDCASSERTEQUAL(el.GetType(), D3D12DescriptorType::Sampler);
       break;
     }
@@ -481,8 +506,29 @@ void DoSerialise(SerialiserType &ser, D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC 
   SERIALISE_MEMBER(StreamOutput);
   SERIALISE_MEMBER(BlendState);
   SERIALISE_MEMBER(SampleMask);
-  SERIALISE_MEMBER(RasterizerState);
-  SERIALISE_MEMBER(DepthStencilState);
+
+  if(ser.VersionAtLeast(0x10))
+  {
+    SERIALISE_MEMBER(RasterizerState);
+  }
+  else
+  {
+    D3D12_RASTERIZER_DESC oldState;
+    ser.Serialise("RasterizerState"_lit, oldState);
+    el.RasterizerState = Upconvert(oldState);
+  }
+
+  if(ser.VersionAtLeast(0x10))
+  {
+    SERIALISE_MEMBER(DepthStencilState);
+  }
+  else
+  {
+    D3D12_DEPTH_STENCIL_DESC1 oldState;
+    ser.Serialise("DepthStencilState"_lit, oldState);
+    el.DepthStencilState = Upconvert(oldState);
+  }
+
   SERIALISE_MEMBER(InputLayout);
   SERIALISE_MEMBER(IBStripCutValue);
   SERIALISE_MEMBER(PrimitiveTopologyType);
@@ -654,6 +700,37 @@ void DoSerialise(SerialiserType &ser, D3D12_RASTERIZER_DESC &el)
 }
 
 template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_RASTERIZER_DESC1 &el)
+{
+  SERIALISE_MEMBER(FillMode);
+  SERIALISE_MEMBER(CullMode);
+  SERIALISE_MEMBER(FrontCounterClockwise);
+  SERIALISE_MEMBER(DepthBias);
+  SERIALISE_MEMBER(DepthBiasClamp);
+  SERIALISE_MEMBER(SlopeScaledDepthBias);
+  SERIALISE_MEMBER(DepthClipEnable);
+  SERIALISE_MEMBER(MultisampleEnable);
+  SERIALISE_MEMBER(AntialiasedLineEnable);
+  SERIALISE_MEMBER(ForcedSampleCount);
+  SERIALISE_MEMBER(ConservativeRaster);
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_RASTERIZER_DESC2 &el)
+{
+  SERIALISE_MEMBER(FillMode);
+  SERIALISE_MEMBER(CullMode);
+  SERIALISE_MEMBER(FrontCounterClockwise);
+  SERIALISE_MEMBER(DepthBias);
+  SERIALISE_MEMBER(DepthBiasClamp);
+  SERIALISE_MEMBER(SlopeScaledDepthBias);
+  SERIALISE_MEMBER(DepthClipEnable);
+  SERIALISE_MEMBER(LineRasterizationMode);
+  SERIALISE_MEMBER(ForcedSampleCount);
+  SERIALISE_MEMBER(ConservativeRaster);
+}
+
+template <class SerialiserType>
 void DoSerialise(SerialiserType &ser, D3D12_DEPTH_STENCILOP_DESC &el)
 {
   SERIALISE_MEMBER(StencilFailOp);
@@ -667,12 +744,49 @@ void DoSerialise(SerialiserType &ser, D3D12_DEPTH_STENCIL_DESC &el)
 {
   SERIALISE_MEMBER(DepthEnable);
   SERIALISE_MEMBER(DepthWriteMask);
-  SERIALISE_MEMBER(DepthFunc);
+  SERIALISE_MEMBER(DepthFunc).Important();
   SERIALISE_MEMBER(StencilEnable);
   SERIALISE_MEMBER(StencilReadMask);
   SERIALISE_MEMBER(StencilWriteMask);
   SERIALISE_MEMBER(FrontFace);
   SERIALISE_MEMBER(BackFace);
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_DEPTH_STENCIL_DESC1 &el)
+{
+  SERIALISE_MEMBER(DepthEnable);
+  SERIALISE_MEMBER(DepthWriteMask);
+  SERIALISE_MEMBER(DepthFunc).Important();
+  SERIALISE_MEMBER(StencilEnable);
+  SERIALISE_MEMBER(StencilReadMask);
+  SERIALISE_MEMBER(StencilWriteMask);
+  SERIALISE_MEMBER(FrontFace);
+  SERIALISE_MEMBER(BackFace);
+  SERIALISE_MEMBER(DepthBoundsTestEnable);
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_DEPTH_STENCILOP_DESC1 &el)
+{
+  SERIALISE_MEMBER(StencilFailOp);
+  SERIALISE_MEMBER(StencilDepthFailOp);
+  SERIALISE_MEMBER(StencilPassOp);
+  SERIALISE_MEMBER(StencilFunc);
+  SERIALISE_MEMBER(StencilReadMask);
+  SERIALISE_MEMBER(StencilWriteMask);
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_DEPTH_STENCIL_DESC2 &el)
+{
+  SERIALISE_MEMBER(DepthEnable);
+  SERIALISE_MEMBER(DepthWriteMask);
+  SERIALISE_MEMBER(DepthFunc);
+  SERIALISE_MEMBER(StencilEnable);
+  SERIALISE_MEMBER(FrontFace);
+  SERIALISE_MEMBER(BackFace);
+  SERIALISE_MEMBER(DepthBoundsTestEnable);
 }
 
 template <class SerialiserType>
@@ -1145,6 +1259,18 @@ void DoSerialise(SerialiserType &ser, D3D12_TEX2D_ARRAY_UAV &el)
 }
 
 template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_TEX2DMS_UAV &el)
+{
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_TEX2DMS_ARRAY_UAV &el)
+{
+  SERIALISE_MEMBER(FirstArraySlice);
+  SERIALISE_MEMBER(ArraySize);
+}
+
+template <class SerialiserType>
 void DoSerialise(SerialiserType &ser, D3D12_TEX3D_UAV &el)
 {
   SERIALISE_MEMBER(MipSlice);
@@ -1168,6 +1294,8 @@ void DoSerialise(SerialiserType &ser, D3D12_UNORDERED_ACCESS_VIEW_DESC &el)
     case D3D12_UAV_DIMENSION_TEXTURE1DARRAY: SERIALISE_MEMBER(Texture1DArray); break;
     case D3D12_UAV_DIMENSION_TEXTURE2D: SERIALISE_MEMBER(Texture2D); break;
     case D3D12_UAV_DIMENSION_TEXTURE2DARRAY: SERIALISE_MEMBER(Texture2DArray); break;
+    case D3D12_UAV_DIMENSION_TEXTURE2DMS: SERIALISE_MEMBER(Texture2DMS); break;
+    case D3D12_UAV_DIMENSION_TEXTURE2DMSARRAY: SERIALISE_MEMBER(Texture2DMSArray); break;
     case D3D12_UAV_DIMENSION_TEXTURE3D: SERIALISE_MEMBER(Texture3D); break;
     default: RDCERR("Unrecognised RTV Dimension %d", el.ViewDimension); break;
   }
@@ -1378,8 +1506,13 @@ void DoSerialise(SerialiserType &ser, D3D12_BOX &el)
   SERIALISE_MEMBER(back);
 }
 
+// deliberately do not serialise D3D12_SAMPLER_DESC
+// for ease of compatibility we serialise D3D12_SAMPLER_DESC2 here and use serialise versioning to
+// detect old captures where the fields did not exist
+// in descriptors where this is referenced, we unconditionally serialise the new version
+
 template <class SerialiserType>
-void DoSerialise(SerialiserType &ser, D3D12_SAMPLER_DESC &el)
+void DoSerialise(SerialiserType &ser, D3D12_SAMPLER_DESC2 &el)
 {
   SERIALISE_MEMBER(Filter).Important();
   SERIALISE_MEMBER(AddressU);
@@ -1388,9 +1521,21 @@ void DoSerialise(SerialiserType &ser, D3D12_SAMPLER_DESC &el)
   SERIALISE_MEMBER(MipLODBias);
   SERIALISE_MEMBER(MaxAnisotropy);
   SERIALISE_MEMBER(ComparisonFunc);
-  SERIALISE_MEMBER(BorderColor);
+  // serialise as floats since that is the most common case. It's also compatible with
+  // D3D12_SAMPLER_DESC
+  // since the flags come later in struct order, we can't do anything clever to serialise by that
+  // type
+  SERIALISE_MEMBER(FloatBorderColor);
   SERIALISE_MEMBER(MinLOD);
   SERIALISE_MEMBER(MaxLOD);
+  if(ser.VersionAtLeast(0xF))
+  {
+    SERIALISE_MEMBER(Flags);
+  }
+  else
+  {
+    el.Flags = D3D12_SAMPLER_FLAG_NONE;
+  }
 }
 
 template <class SerialiserType>
@@ -1398,20 +1543,6 @@ void DoSerialise(SerialiserType &ser, D3D12_RT_FORMAT_ARRAY &el)
 {
   SERIALISE_MEMBER(RTFormats);
   SERIALISE_MEMBER(NumRenderTargets);
-}
-
-template <class SerialiserType>
-void DoSerialise(SerialiserType &ser, D3D12_DEPTH_STENCIL_DESC1 &el)
-{
-  SERIALISE_MEMBER(DepthEnable);
-  SERIALISE_MEMBER(DepthWriteMask);
-  SERIALISE_MEMBER(DepthFunc).Important();
-  SERIALISE_MEMBER(StencilEnable);
-  SERIALISE_MEMBER(StencilReadMask);
-  SERIALISE_MEMBER(StencilWriteMask);
-  SERIALISE_MEMBER(FrontFace);
-  SERIALISE_MEMBER(BackFace);
-  SERIALISE_MEMBER(DepthBoundsTestEnable);
 }
 
 template <class SerialiserType>
@@ -1587,6 +1718,110 @@ void DoSerialise(SerialiserType &ser, D3D12_DISPATCH_ARGUMENTS &el)
   SERIALISE_MEMBER(ThreadGroupCountZ).Important();
 }
 
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12ResourceLayout &el)
+{
+  RDCCOMPILE_ASSERT(sizeof(el) == sizeof(uint32_t),
+                    "D3D12ResourceLayout is expected to be a 32-bit value");
+  ser.SerialiseValue(SDBasic::Enum, 4, (uint32_t &)el);
+  ser.SerialiseStringify(el);
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_GLOBAL_BARRIER &el)
+{
+  SERIALISE_MEMBER(SyncBefore);
+  SERIALISE_MEMBER(SyncAfter);
+  SERIALISE_MEMBER(AccessBefore);
+  SERIALISE_MEMBER(AccessAfter);
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_BARRIER_SUBRESOURCE_RANGE &el)
+{
+  SERIALISE_MEMBER(IndexOrFirstMipLevel);
+  SERIALISE_MEMBER(NumMipLevels);
+  SERIALISE_MEMBER(FirstArraySlice);
+  SERIALISE_MEMBER(NumArraySlices);
+  SERIALISE_MEMBER(FirstPlane);
+  SERIALISE_MEMBER(NumPlanes);
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_TEXTURE_BARRIER &el)
+{
+  SERIALISE_MEMBER(SyncBefore);
+  SERIALISE_MEMBER(SyncAfter);
+  SERIALISE_MEMBER(AccessBefore);
+  SERIALISE_MEMBER(AccessAfter);
+  SERIALISE_MEMBER(LayoutBefore);
+  SERIALISE_MEMBER(LayoutAfter);
+  SERIALISE_MEMBER(pResource).Important();
+  SERIALISE_MEMBER(Subresources);
+  SERIALISE_MEMBER(Flags);
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_BUFFER_BARRIER &el)
+{
+  SERIALISE_MEMBER(SyncBefore);
+  SERIALISE_MEMBER(SyncAfter);
+  SERIALISE_MEMBER(AccessBefore);
+  SERIALISE_MEMBER(AccessAfter);
+  SERIALISE_MEMBER(pResource).Important();
+  SERIALISE_MEMBER(Offset);
+  SERIALISE_MEMBER(Size);
+}
+
+template <class SerialiserType>
+void DoSerialise(SerialiserType &ser, D3D12_BARRIER_GROUP &el)
+{
+  SERIALISE_MEMBER(Type).Important();
+  SERIALISE_MEMBER(NumBarriers).Important();
+
+  switch(el.Type)
+  {
+    case D3D12_BARRIER_TYPE_GLOBAL:
+    {
+      SERIALISE_MEMBER_ARRAY(pGlobalBarriers, NumBarriers);
+      break;
+    }
+    case D3D12_BARRIER_TYPE_TEXTURE:
+    {
+      SERIALISE_MEMBER_ARRAY(pTextureBarriers, NumBarriers).Important();
+      break;
+    }
+    case D3D12_BARRIER_TYPE_BUFFER:
+    {
+      SERIALISE_MEMBER_ARRAY(pBufferBarriers, NumBarriers).Important();
+      break;
+    }
+  }
+}
+
+template <>
+void Deserialise(const D3D12_BARRIER_GROUP &el)
+{
+  switch(el.Type)
+  {
+    case D3D12_BARRIER_TYPE_GLOBAL:
+    {
+      delete[] el.pGlobalBarriers;
+      break;
+    }
+    case D3D12_BARRIER_TYPE_TEXTURE:
+    {
+      delete[] el.pTextureBarriers;
+      break;
+    }
+    case D3D12_BARRIER_TYPE_BUFFER:
+    {
+      delete[] el.pBufferBarriers;
+      break;
+    }
+  }
+}
+
 INSTANTIATE_SERIALISE_TYPE(D3D12RootSignature);
 INSTANTIATE_SERIALISE_TYPE(PortableHandle);
 INSTANTIATE_SERIALISE_TYPE(D3D12_CPU_DESCRIPTOR_HANDLE);
@@ -1612,7 +1847,7 @@ INSTANTIATE_SERIALISE_TYPE(D3D12_DESCRIPTOR_HEAP_DESC);
 INSTANTIATE_SERIALISE_TYPE(D3D12_INDIRECT_ARGUMENT_DESC);
 INSTANTIATE_SERIALISE_TYPE(D3D12_COMMAND_SIGNATURE_DESC);
 INSTANTIATE_SERIALISE_TYPE(D3D12_QUERY_HEAP_DESC);
-INSTANTIATE_SERIALISE_TYPE(D3D12_SAMPLER_DESC);
+INSTANTIATE_SERIALISE_TYPE(D3D12_SAMPLER_DESC2);
 INSTANTIATE_SERIALISE_TYPE(D3D12_CONSTANT_BUFFER_VIEW_DESC);
 INSTANTIATE_SERIALISE_TYPE(D3D12_SHADER_RESOURCE_VIEW_DESC);
 INSTANTIATE_SERIALISE_TYPE(D3D12_RENDER_TARGET_VIEW_DESC);
@@ -1630,13 +1865,19 @@ INSTANTIATE_SERIALISE_TYPE(D3D12_BOX);
 INSTANTIATE_SERIALISE_TYPE(D3D12_VIEWPORT);
 INSTANTIATE_SERIALISE_TYPE(D3D12_PIPELINE_STATE_STREAM_DESC);
 INSTANTIATE_SERIALISE_TYPE(D3D12_RT_FORMAT_ARRAY);
+INSTANTIATE_SERIALISE_TYPE(D3D12_RASTERIZER_DESC);
+INSTANTIATE_SERIALISE_TYPE(D3D12_RASTERIZER_DESC1);
+INSTANTIATE_SERIALISE_TYPE(D3D12_RASTERIZER_DESC2);
 INSTANTIATE_SERIALISE_TYPE(D3D12_DEPTH_STENCIL_DESC1);
+INSTANTIATE_SERIALISE_TYPE(D3D12_DEPTH_STENCIL_DESC2);
 INSTANTIATE_SERIALISE_TYPE(D3D12_VIEW_INSTANCING_DESC);
 INSTANTIATE_SERIALISE_TYPE(D3D12_SAMPLE_POSITION);
 INSTANTIATE_SERIALISE_TYPE(D3D12_SUBRESOURCE_RANGE_UINT64);
 INSTANTIATE_SERIALISE_TYPE(D3D12_WRITEBUFFERIMMEDIATE_PARAMETER);
 INSTANTIATE_SERIALISE_TYPE(D3D12_RENDER_PASS_RENDER_TARGET_DESC);
 INSTANTIATE_SERIALISE_TYPE(D3D12_RENDER_PASS_DEPTH_STENCIL_DESC);
+INSTANTIATE_SERIALISE_TYPE(D3D12_BARRIER_GROUP);
+INSTANTIATE_SERIALISE_TYPE(D3D12ResourceLayout);
 INSTANTIATE_SERIALISE_TYPE(D3D12_DRAW_ARGUMENTS);
 INSTANTIATE_SERIALISE_TYPE(D3D12_DRAW_INDEXED_ARGUMENTS);
 INSTANTIATE_SERIALISE_TYPE(D3D12_DISPATCH_ARGUMENTS);

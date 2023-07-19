@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -101,19 +101,18 @@ rdcstr GetFullPathname(const rdcstr &filename)
   return rdcstr(path);
 }
 
-rdcstr FindFileInPath(const rdcstr &fileName)
+rdcstr DefaultFindFileInPath(const rdcstr &fileName)
 {
   rdcstr filePath;
 
   // Search the PATH directory list for the application (like shell which) to get the absolute path
   // Return "" if no exectuable found in the PATH list
-  char *pathEnvVar = getenv("PATH");
-  if(!pathEnvVar)
+  rdcstr pathEnvVar = Process::GetEnvVariable("PATH");
+  if(pathEnvVar.empty())
     return filePath;
 
   // Make a copy of our PATH so strtok can insert NULL without actually changing env
-  char *localPath = new char[strlen(pathEnvVar) + 1];
-  strcpy(localPath, pathEnvVar);
+  char *localPath = pathEnvVar.data();
 
   const char *pathSeparator = ":";
   const char *path = strtok(localPath, pathSeparator);
@@ -129,7 +128,6 @@ rdcstr FindFileInPath(const rdcstr &fileName)
     path = strtok(NULL, pathSeparator);
   }
 
-  delete[] localPath;
   return filePath;
 }
 
@@ -210,10 +208,10 @@ void GetDefaultFiles(const rdcstr &logBaseName, rdcstr &capture_filename, rdcstr
 
   strcpy(temp_folder, GetTempRootPath().c_str());
 
-  char *temp_override = getenv("RENDERDOC_TEMP");
-  if(temp_override && temp_override[0] == '/')
+  rdcstr temp_override = Process::GetEnvVariable("RENDERDOC_TEMP");
+  if(!temp_override.empty() && temp_override[0] == '/')
   {
-    strncpy(temp_folder, temp_override, sizeof(temp_folder) - 1);
+    strncpy(temp_folder, temp_override.c_str(), sizeof(temp_folder) - 1);
     size_t len = strlen(temp_folder);
     while(temp_folder[len - 1] == '/')
       temp_folder[--len] = 0;
@@ -224,9 +222,9 @@ void GetDefaultFiles(const rdcstr &logBaseName, rdcstr &capture_filename, rdcstr
                         1900 + now.tm_year, now.tm_mon + 1, now.tm_mday, now.tm_hour, now.tm_min);
 
   // set by UI when launching programs so all logging goes to the same file
-  char *logfile_override = getenv("RENDERDOC_DEBUG_LOG_FILE");
-  if(logfile_override)
-    logging_filename = rdcstr(logfile_override);
+  rdcstr logfile_override = Process::GetEnvVariable("RENDERDOC_DEBUG_LOG_FILE");
+  if(!logfile_override.empty())
+    logging_filename = logfile_override;
   else
     logging_filename = StringFormat::Fmt(
         "%s/RenderDoc/%s_%04d.%02d.%02d_%02d.%02d.%02d.log", temp_folder, logBaseName.c_str(),
@@ -402,13 +400,7 @@ FILE *fopen(const rdcstr &filename, FileMode mode)
 
 rdcstr ErrorString()
 {
-  int err = errno;
-
-  char buf[256] = {0};
-
-  strerror_r(err, buf, 256);
-
-  return buf;
+  return strerror(errno);
 }
 
 size_t fread(void *buf, size_t elementSize, size_t count, FILE *f)
@@ -505,8 +497,8 @@ rdcstr logfile_readall(uint64_t offset, const rdcstr &filename)
 
 LogFileHandle *logfile_open(const rdcstr &filename)
 {
-  int fd =
-      open(filename.c_str(), O_APPEND | O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+  int fd = open(filename.c_str(), O_APPEND | O_WRONLY | O_CREAT | O_NOFOLLOW,
+                S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
   if(fd < 0)
   {

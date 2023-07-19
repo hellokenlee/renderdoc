@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2020-2022 Baldur Karlsson
+ * Copyright (c) 2020-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -101,6 +101,26 @@ void main()
     depth = uintBitsToFloat(data);
     uint stencilData = srcData[idx * 2 + 1];
     stencil = stencilData & 0xFF;
+  }
+  else if(format == SHADER_S8_UINT)
+  {
+    uint stencilData = srcData[idx / 4];
+    if((idx % 4) == 0)
+    {
+      stencil = stencilData & 0x000000FF;
+    }
+    else if((idx % 4) == 1)
+    {
+      stencil = (stencilData & 0x0000FF00) >> 8;
+    }
+    else if((idx % 4) == 2)
+    {
+      stencil = (stencilData & 0x00FF0000) >> 16;
+    }
+    else
+    {
+      stencil = (stencilData & 0xFF000000) >> 24;
+    }
   }
 
   if(currentStencil < 256u)

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -5569,6 +5569,15 @@ HRESULT WrappedID3D11DeviceContext::FinishCommandList(BOOL RestoreDeferredContex
       // mark that this command list is empty so that if we immediately try and capture
       // we pick up on that.
       m_EmptyCommandList = true;
+
+      // except if we were supposed to restore the deferred context state. Then there would have to
+      // be some state setting here (which we're not recording).
+      // This makes the command list immediately unsuccessful and forces a retry - if this happens
+      // again the restore will be recorded
+      if(RestoreDeferredContextState)
+        m_EmptyCommandList = false;
+
+      m_SuccessfulCapture = false;
 
       // still need to propagate up dirty resources to the immediate context
       wrapped->SwapDirtyResources(m_DeferredDirty);

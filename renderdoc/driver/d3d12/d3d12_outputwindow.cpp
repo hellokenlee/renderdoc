@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -71,13 +71,13 @@ void D3D12Replay::OutputWindow::MakeRTV(bool msaa)
                                     D3D12_RESOURCE_STATE_RENDER_TARGET, NULL,
                                     __uuidof(ID3D12Resource), (void **)&col);
 
-  col->SetName(L"Output Window RTV");
-
   if(FAILED(hr))
   {
     RDCERR("Failed to create colour texture for window, HRESULT: %s", ToStr(hr).c_str());
     return;
   }
+
+  col->SetName(L"Output Window RTV");
 
   colResolve = NULL;
 
@@ -89,13 +89,13 @@ void D3D12Replay::OutputWindow::MakeRTV(bool msaa)
                                       D3D12_RESOURCE_STATE_COPY_SOURCE, NULL,
                                       __uuidof(ID3D12Resource), (void **)&colResolve);
 
-    colResolve->SetName(L"Output Window Resolve");
-
     if(FAILED(hr))
     {
       RDCERR("Failed to create resolve texture for window, HRESULT: %s", ToStr(hr).c_str());
       return;
     }
+
+    colResolve->SetName(L"Output Window Resolve");
   }
 
   dev->CreateRenderTargetView(col, NULL, rtv);
@@ -117,6 +117,9 @@ void D3D12Replay::OutputWindow::MakeDSV()
 {
   SAFE_RELEASE(depth);
 
+  if(!col)
+    return;
+
   D3D12_RESOURCE_DESC texDesc = col->GetDesc();
 
   texDesc.Alignment = 0;
@@ -134,13 +137,13 @@ void D3D12Replay::OutputWindow::MakeDSV()
                                             D3D12_RESOURCE_STATE_DEPTH_WRITE, NULL,
                                             __uuidof(ID3D12Resource), (void **)&depth);
 
-  depth->SetName(L"Output Window Depth");
-
   if(FAILED(hr))
   {
     RDCERR("Failed to create DSV texture for output window, HRESULT: %s", ToStr(hr).c_str());
     return;
   }
+
+  depth->SetName(L"Output Window Depth");
 
   dev->CreateDepthStencilView(depth, NULL, dsv);
 

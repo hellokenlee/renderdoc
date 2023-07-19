@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -253,17 +253,21 @@ PerformanceCounterSelection::PerformanceCounterSelection(ICaptureContext &ctx,
 
   ui->counterTree->setMouseTracking(true);
 
-  ctx.Replay().AsyncInvoke([this, selectedCounters](IReplayController *controller) {
+  QPointer<PerformanceCounterSelection> ptr(this);
+  ctx.Replay().AsyncInvoke([this, ptr, selectedCounters](IReplayController *controller) {
     QVector<CounterDescription> counterDescriptions;
     for(const GPUCounter counter : controller->EnumerateCounters())
     {
       counterDescriptions.append(controller->DescribeCounter(counter));
     }
 
-    GUIInvoke::call(this, [counterDescriptions, selectedCounters, this]() {
-      SetCounters(counterDescriptions);
-      SetSelectedCounters(selectedCounters);
-    });
+    if(ptr)
+    {
+      GUIInvoke::call(this, [counterDescriptions, selectedCounters, this]() {
+        SetCounters(counterDescriptions);
+        SetSelectedCounters(selectedCounters);
+      });
+    }
   });
 }
 

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -38,7 +38,7 @@ class WrappedID3D11DeviceContext;
 
 class D3D11ResourceManager;
 
-struct CopyPixelParams;
+struct D3D11CopyPixelParams;
 
 namespace DXBC
 {
@@ -147,7 +147,7 @@ public:
 
   TextureShaderDetails GetShaderDetails(ResourceId id, CompType typeCast, bool rawOutput);
 
-  void PixelHistoryCopyPixel(CopyPixelParams &params, size_t eventSlot, uint32_t storeSlot);
+  void PixelHistoryCopyPixel(D3D11CopyPixelParams &params, size_t eventSlot, uint32_t storeSlot);
 
   struct CacheElem
   {

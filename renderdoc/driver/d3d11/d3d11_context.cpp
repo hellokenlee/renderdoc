@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -162,7 +162,6 @@ WrappedID3D11DeviceContext::WrappedID3D11DeviceContext(WrappedID3D11Device *real
   m_ScratchSerialiser.SetUserData(GetResourceManager());
   m_ScratchSerialiser.SetVersion(D3D11InitParams::CurrentVersion);
 
-  m_SuccessfulCapture = true;
   m_FailureReason = CaptureSucceeded;
   m_EmptyCommandList = true;
 
@@ -189,6 +188,8 @@ WrappedID3D11DeviceContext::WrappedID3D11DeviceContext(WrappedID3D11Device *real
     m_CurrentPipelineState->SetImmediatePipeline(m_pDevice);
 
     m_MarkedActive = false;
+
+    m_SuccessfulCapture = true;
   }
   else
   {
@@ -198,8 +199,16 @@ WrappedID3D11DeviceContext::WrappedID3D11DeviceContext(WrappedID3D11Device *real
     // bool flag rather than "if immediate and not flagged"
     m_MarkedActive = true;
 
+    // deferred contexts are only successful if they were active capturing when they started
     if(IsCaptureMode(m_State) && RenderDoc::Inst().GetCaptureOptions().captureAllCmdLists)
+    {
       m_State = CaptureState::ActiveCapturing;
+      m_SuccessfulCapture = true;
+    }
+    else
+    {
+      m_SuccessfulCapture = false;
+    }
   }
 
   ReplayFakeContext(ResourceId());
@@ -641,8 +650,10 @@ void WrappedID3D11DeviceContext::CleanupCapture()
 
     m_MapResourceRecordAllocs.clear();
 
-    if(RenderDoc::Inst().GetCaptureOptions().captureAllCmdLists)
+    if(RenderDoc::Inst().GetCaptureOptions().captureAllCmdLists || IsActiveCapturing(m_State))
       return;
+
+    m_SuccessfulCapture = false;
   }
   else
   {

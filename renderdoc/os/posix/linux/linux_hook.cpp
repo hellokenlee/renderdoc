@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -100,8 +100,9 @@ void GetUnhookedEnvp(char *const *envp, rdcstr &envpStr, rdcarray<char *> &modif
 void GetHookedEnvp(char *const *envp, rdcstr &envpStr, rdcarray<char *> &modifiedEnv);
 void ResetHookingEnvVars();
 void StopAtMainInChild();
-bool StopChildAtMain(pid_t childPid);
+bool StopChildAtMain(pid_t childPid, bool *exitWithNoExec);
 void ResumeProcess(pid_t childPid, uint32_t delay = 0);
+int direct_setenv(const char *name, const char *value, int overwrite);
 
 ///////////////////////////////////////////////////////////////
 // exec hooks - we have to hook each variant since if the application calls the 'real' one of a
@@ -293,7 +294,7 @@ __attribute__((visibility("default"))) pid_t fork()
 
     pid_t ret = realfork();
     if(ret == 0)
-      unsetenv(RENDERDOC_VULKAN_LAYER_VAR);
+      direct_setenv(RENDERDOC_VULKAN_LAYER_VAR, "", true);
 
     return ret;
   }
@@ -323,9 +324,15 @@ __attribute__((visibility("default"))) pid_t fork()
     if(Linux_Debug_PtraceLogging())
       RDCLOG("hooked fork() in parent, child is %d", ret);
 
-    bool stopped = StopChildAtMain(ret);
+    bool exitWithNoExec = false;
+    bool stopped = StopChildAtMain(ret, &exitWithNoExec);
 
-    if(stopped)
+    if(exitWithNoExec)
+    {
+      if(Linux_Debug_PtraceLogging())
+        RDCLOG("hooked fork() child %d exited gracefully while waiting for exec(). Ignoring", ret);
+    }
+    else if(stopped)
     {
       int ident = GetIdentPort(ret);
 
@@ -374,6 +381,9 @@ __attribute__((visibility("default"))) pid_t fork()
       RenderDoc::Inst().AddChildThread((uint32_t)ret, handle);
     }
   }
+
+  if(Linux_Debug_PtraceLogging())
+    RDCLOG("Returning from fork");
 
   return ret;
 }

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -49,7 +49,7 @@ struct VKMeshDisplayPipelines
   uint32_t secondaryStridePadding = 0;
 };
 
-struct CopyPixelParams;
+struct VkCopyPixelParams;
 
 struct PixelHistoryResources;
 
@@ -63,9 +63,9 @@ public:
 
   void GetBufferData(ResourceId buff, uint64_t offset, uint64_t len, bytebuf &ret);
 
-  void CopyTex2DMSToBuffer(VkBuffer destBuffer, VkImage srcMS, VkExtent3D extent,
-                           uint32_t baseSlice, uint32_t numSlices, uint32_t baseSample,
-                           uint32_t numSamples, VkFormat fmt);
+  void CopyTex2DMSToBuffer(VkCommandBuffer cmd, VkBuffer destBuffer, VkImage srcMS,
+                           VkExtent3D extent, uint32_t baseSlice, uint32_t numSlices,
+                           uint32_t baseSample, uint32_t numSamples, VkFormat fmt);
 
   void CopyBufferToTex2DMS(VkCommandBuffer cmd, VkImage destMS, VkBuffer srcBuffer,
                            VkExtent3D extent, uint32_t numSlices, uint32_t numSamples, VkFormat fmt);
@@ -99,7 +99,7 @@ public:
                                   const Subresource &sub, uint32_t numEvents);
   bool PixelHistoryDestroyResources(const PixelHistoryResources &resources);
 
-  void PixelHistoryCopyPixel(VkCommandBuffer cmd, CopyPixelParams &p, size_t offset);
+  void PixelHistoryCopyPixel(VkCommandBuffer cmd, VkCopyPixelParams &p, size_t offset);
 
   VkImageLayout GetImageLayout(ResourceId image, VkImageAspectFlagBits aspect, uint32_t mip,
                                uint32_t slice);
@@ -124,21 +124,27 @@ private:
   std::map<uint64_t, VKMeshDisplayPipelines> m_CachedMeshPipelines;
 
   // CopyBufferToTex2DMS
-  VkDescriptorPool m_BufferMSDescriptorPool;
   VkDescriptorSetLayout m_BufferMSDescSetLayout = VK_NULL_HANDLE;
   VkPipelineLayout m_BufferMSPipeLayout = VK_NULL_HANDLE;
-  VkDescriptorSet m_BufferMSDescSet = VK_NULL_HANDLE;
+  static const uint32_t BufferMSDescriptorPoolSize = 64;
+  rdcarray<VkDescriptorPool> m_BufferMSDescriptorPools;
+  rdcarray<VkDescriptorSet> m_FreeBufferMSDescriptorSets;
+  rdcarray<VkDescriptorSet> m_UsedBufferMSDescriptorSets;
+  VkDescriptorSet GetBufferMSDescSet();
+  void ResetBufferMSDescriptorPools();
   VkPipeline m_Buffer2MSPipe = VK_NULL_HANDLE;
   VkPipeline m_MS2BufferPipe = VK_NULL_HANDLE;
   VkPipeline m_DepthMS2BufferPipe = VK_NULL_HANDLE;
 
   // MSAA dummy images
-  VkDeviceMemory m_DummyStencilMemory = VK_NULL_HANDLE;
+  VkDeviceMemory m_DummyMemory = VK_NULL_HANDLE;
+  VkImage m_DummyDepthImage = {VK_NULL_HANDLE};
+  VkImageView m_DummyDepthView = {VK_NULL_HANDLE};
   VkImage m_DummyStencilImage = {VK_NULL_HANDLE};
   VkImageView m_DummyStencilView = {VK_NULL_HANDLE};
 
   // one per depth/stencil output format, per sample count
-  VkPipeline m_DepthArray2MSPipe[6][4] = {{VK_NULL_HANDLE}};
+  VkPipeline m_DepthArray2MSPipe[7][4] = {{VK_NULL_HANDLE}};
 
   VkPipelineCache m_PipelineCache = VK_NULL_HANDLE;
 
@@ -157,9 +163,9 @@ private:
     VkPipeline TexPipeline = VK_NULL_HANDLE;
   } m_Custom;
 
-  void CopyDepthTex2DMSToBuffer(VkBuffer destBuffer, VkImage srcMS, VkExtent3D extent,
-                                uint32_t baseSlice, uint32_t numSlices, uint32_t baseSample,
-                                uint32_t numSamples, VkFormat fmt);
+  void CopyDepthTex2DMSToBuffer(VkCommandBuffer cmd, VkBuffer destBuffer, VkImage srcMS,
+                                VkExtent3D extent, uint32_t baseSlice, uint32_t numSlices,
+                                uint32_t baseSample, uint32_t numSamples, VkFormat fmt);
 
   void CopyDepthBufferToTex2DMS(VkCommandBuffer cmd, VkImage destMS, VkBuffer srcBuffer,
                                 VkExtent3D extent, uint32_t numSlices, uint32_t numSamples,

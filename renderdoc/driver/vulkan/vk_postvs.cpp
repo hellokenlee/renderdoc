@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -1166,16 +1166,35 @@ static void ConvertToMeshOutputCompute(const ShaderReflection &refl,
 
           if(valueID)
           {
+            rdcspv::Id ptr = ins[i].variable;
+
+            if(!patchData.inputs[i].accessChain.empty())
+            {
+              // for composite types we need to access chain first
+              rdcarray<rdcspv::Id> chain;
+
+              for(uint32_t accessIdx : patchData.inputs[i].accessChain)
+              {
+                if(idxs[accessIdx] == 0)
+                  idxs[accessIdx] = editor.AddConstantImmediate<uint32_t>(accessIdx);
+
+                chain.push_back(idxs[accessIdx]);
+              }
+
+              ptr = ops.add(rdcspv::OpAccessChain(ins[i].privatePtrType, editor.MakeId(),
+                                                  patchData.inputs[i].ID, chain));
+            }
+
             if(VarTypeCompType(vType) == compType)
             {
-              ops.add(rdcspv::OpStore(ins[i].variable, valueID));
+              ops.add(rdcspv::OpStore(ptr, valueID));
             }
             else
             {
               // assume we can just bitcast
               rdcspv::Id castedValue =
                   ops.add(rdcspv::OpBitcast(ins[i].baseType, editor.MakeId(), valueID));
-              ops.add(rdcspv::OpStore(ins[i].variable, castedValue));
+              ops.add(rdcspv::OpStore(ptr, castedValue));
             }
           }
           else
@@ -3291,6 +3310,22 @@ void VulkanReplay::FetchTessGSOut(uint32_t eventId, VulkanRenderState &state)
       ObjDisp(cmd)->CmdEndTransformFeedbackEXT(Unwrap(cmd), 0, 1, NULL, NULL);
 
       ObjDisp(cmd)->CmdEndQuery(Unwrap(cmd), Unwrap(m_PostVS.XFBQueryPool), inst - 1);
+
+      // Instanced draws with a wild number of instances can hang the GPU, sync after every 1000
+      if((inst % 1000) == 0)
+      {
+        state.EndRenderPass(cmd);
+
+        vkr = ObjDisp(dev)->EndCommandBuffer(Unwrap(cmd));
+        CheckVkResult(vkr);
+
+        cmd = m_pDriver->GetNextCmd();
+
+        vkr = ObjDisp(dev)->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
+        CheckVkResult(vkr);
+
+        state.BeginRenderPassAndApplyState(m_pDriver, cmd, VulkanRenderState::BindGraphics, false);
+      }
     }
 
     state.EndRenderPass(cmd);

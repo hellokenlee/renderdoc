@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -511,7 +511,9 @@ bool D3D11Replay::RenderTextureInternal(TextureDisplay cfg, TexDisplayFlags flag
   // we create all proxy textures as typeless to allow us to cast, but that means if the remote API
   // gave us a typed texture and then wants to view it 'typeless' (i.e. as it was created) we need
   // to restore that type here.
-  if(typeCast == CompType::Typeless)
+  //
+  // we also override the typecast for depth here, to allow handling of S8 textures
+  if(typeCast == CompType::Typeless || typeCast == CompType::Depth)
   {
     auto it = m_ProxyResourceOrigInfo.find(cfg.resourceId);
     if(it != m_ProxyResourceOrigInfo.end())

@@ -1,7 +1,7 @@
 /******************************************************************************
 * The MIT License (MIT)
 *
-* Copyright (c) 2019-2022 Baldur Karlsson
+* Copyright (c) 2019-2023 Baldur Karlsson
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -173,6 +173,11 @@ struct D3D11GraphicsTest : public GraphicsTest
   UINT createFlags = 0;
 
   DXGI_ADAPTER_DESC adapterDesc = {};
+
+  ID3D11VertexShaderPtr DefaultTriVS;
+  ID3D11PixelShaderPtr DefaultTriPS;
+
+  ID3D11BufferPtr DefaultTriVB;
 
   ID3D11VertexShaderPtr swapBlitVS;
   ID3D11PixelShaderPtr swapBlitPS;

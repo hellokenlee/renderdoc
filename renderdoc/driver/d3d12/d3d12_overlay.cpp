@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -47,6 +47,8 @@
 
 RDOC_CONFIG(rdcstr, D3D12_Debug_OverlayDumpDirPath, "",
             "Path to dump quad overdraw patched DXIL files.");
+
+RDOC_EXTERN_CONFIG(bool, D3D12_Debug_SingleSubmitFlushing);
 
 struct D3D12QuadOverdrawCallback : public D3D12ActionCallback
 {
@@ -140,7 +142,8 @@ struct D3D12QuadOverdrawCallback : public D3D12ActionCallback
       pipeDesc.DepthStencilState.BackFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
       pipeDesc.DepthStencilState.BackFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
       pipeDesc.DepthStencilState.BackFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
-      pipeDesc.DepthStencilState.StencilWriteMask = 0;
+      pipeDesc.DepthStencilState.FrontFace.StencilWriteMask = 0;
+      pipeDesc.DepthStencilState.BackFace.StencilWriteMask = 0;
 
       // disable any multisampling
       pipeDesc.SampleDesc.Count = 1;
@@ -386,6 +389,8 @@ void D3D12Replay::PatchQuadWritePS(D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC &pi
 
   if(dxil)
   {
+    using namespace DXIL;
+
     rdcstr stringTable;
     stringTable.push_back('\0');
 
@@ -394,26 +399,26 @@ void D3D12Replay::PatchQuadWritePS(D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC &pi
     rdcarray<uint32_t> stringTableOffsets;
     rdcarray<uint32_t> semanticIndexTableOffsets;
 
+    // !!!NOTE!!!
+    //
+    // In the DXIL editing below we directly reference the raster feed DXIL metadata from the edited
+    // metadata. This is fine as long as the metadata 'externally' passed into the editor has
+    // lifetime longer than the editor
     {
       // use a local bytebuf so that if we error out, patchedPs above won't be modified
-      DXIL::ProgramEditor editor(
-          &quadOverdrawDXBC, rastFeedingDXBC.GetDXILByteCode()->GetMetadataCount() * 2, patchedDXBC);
-
-      const DXIL::Type *i32 = editor.GetInt32Type();
-      const DXIL::Type *i8 = editor.GetInt8Type();
+      ProgramEditor editor(&quadOverdrawDXBC, patchedDXBC);
 
       // We need to make two changes: copy the raster-feeding shader's output signature wholesale
-      // into
-      // the pixel shader. It only needs position, which *must* have been written by definition, the
-      // coverage input comes from an intrinsic. None of the properties should need to change, so
-      // it's
-      // a pure deep copy of metadata and properties to ensure a compatible signature.
+      // into the pixel shader. It only needs position, which *must* have been written by
+      // definition, the coverage input comes from an intrinsic. None of the properties should need
+      // to change, so it's a pure deep copy of metadata and properties to ensure a compatible
+      // signature.
       //
       // After that, we need to find the input load ops in the original shader, and patch the row it
       // refers to (it would have been 0 previously). Since position is a full float4 we shouldn't
       // have to change anything else
 
-      const DXIL::Metadata *rastEntryPoints =
+      const Metadata *rastEntryPoints =
           rastFeedingDXBC.GetDXILByteCode()->GetMetadataByName("dx.entryPoints");
 
       if(!rastEntryPoints)
@@ -424,105 +429,68 @@ void D3D12Replay::PatchQuadWritePS(D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC &pi
 
       // TODO select the entry point for multiple entry points? RT only for now
       RDCASSERT(rastEntryPoints->children.size() > 0 && rastEntryPoints->children[0]);
-      const DXIL::Metadata *rastEntry = rastEntryPoints->children[0];
+      const Metadata *rastEntry = rastEntryPoints->children[0];
 
       RDCASSERT(rastEntry->children.size() > 2 && rastEntry->children[2]);
-      const DXIL::Metadata *rastSigs = rastEntry->children[2];
+      const Metadata *rastSigs = rastEntry->children[2];
 
       RDCASSERT(rastSigs->children.size() > 1 && rastSigs->children[1]);
-      const DXIL::Metadata *rastOutSig = rastSigs->children[1];
+      const Metadata *rastOutSig = rastSigs->children[1];
 
-      DXIL::Metadata *entryPoints = editor.GetMetadataByName("dx.entryPoints");
+      Metadata *quadPSentryPoints = editor.GetMetadataByName("dx.entryPoints");
 
-      if(!entryPoints)
+      if(!quadPSentryPoints)
       {
         RDCERR("Couldn't find entry point list");
         return;
       }
 
       // TODO select the entry point for multiple entry points? RT only for now
-      RDCASSERT(entryPoints->children.size() > 0 && entryPoints->children[0]);
-      DXIL::Metadata *entry = entryPoints->children[0];
+      RDCASSERT(quadPSentryPoints->children.size() > 0 && quadPSentryPoints->children[0]);
+      Metadata *quadPSentry = quadPSentryPoints->children[0];
 
-      rdcstr entryName = entry->children[1]->str;
+      rdcstr entryName = quadPSentry->children[1]->str;
 
-      RDCASSERT(entry->children.size() > 2 && entry->children[2]);
-      DXIL::Metadata *sigs = entry->children[2];
+      RDCASSERT(quadPSentry->children.size() > 2 && quadPSentry->children[2]);
+      Metadata *quadPSsigs = quadPSentry->children[2];
 
-      RDCASSERT(sigs->children.size() > 0);
+      RDCASSERT(quadPSsigs->children.size() > 0);
 
-      DXIL::Metadata inputSig;
+      // just repoint input signature list to rast out sig
+      quadPSsigs->children[0] = (Metadata *)rastOutSig;
 
       uint32_t posID = ~0U;
 
-#define DUPLICATE_META_CONSTANT(newConst, type_, oldConst)                                      \
-  {                                                                                             \
-    DXIL::Metadata m;                                                                           \
-    m.isConstant = true;                                                                        \
-    m.type = type_;                                                                             \
-    m.value = DXIL::Value(                                                                      \
-        editor.GetOrAddConstant(DXIL::Constant(type_, oldConst->value.constant->val.u32v[0]))); \
-    newConst = editor.AddMetadata(m);                                                           \
-  }
-
+      // process signature to get string table & index table for semantics
       for(size_t i = 0; i < rastOutSig->children.size(); i++)
       {
-        const DXIL::Metadata *oldSigEl = rastOutSig->children[i];
-        DXIL::Metadata newSigEl;
+        const Metadata *sigEl = rastOutSig->children[i];
 
-        newSigEl.children.resize(oldSigEl->children.size());
-
-        // element ID
-        DUPLICATE_META_CONSTANT(newSigEl.children[0], i32, oldSigEl->children[0]);
-
-        // semantic name
+        // only append non-system values to the string table
+        uint32_t systemValue = cast<Constant>(sigEl->children[3]->value)->getU32();
+        if(systemValue == 0)
         {
-          DXIL::Metadata m;
-          m.isString = true;
-          m.str = oldSigEl->children[1]->str;
-          newSigEl.children[1] = editor.AddMetadata(m);
-
-          // only append non-system values to the string table
-          if(oldSigEl->children[3]->value.constant->val.u32v[0] == 0)
-          {
-            stringTableOffsets.push_back((uint32_t)stringTable.size());
-            stringTable.append(m.str);
-            stringTable.push_back('\0');
-          }
-          else
-          {
-            stringTableOffsets.push_back(0);
-          }
+          stringTableOffsets.push_back((uint32_t)stringTable.size());
+          stringTable.append(sigEl->children[1]->str);
+          stringTable.push_back('\0');
         }
+        else
+        {
+          stringTableOffsets.push_back(0);
 
-        // component type
-        DUPLICATE_META_CONSTANT(newSigEl.children[2], i8, oldSigEl->children[2]);
-
-        // semantic kind
-        DUPLICATE_META_CONSTANT(newSigEl.children[3], i8, oldSigEl->children[3]);
-
-        // SV_Position is 3
-        if(oldSigEl->children[3]->value.constant->val.u32v[0] == 3)
-          posID = oldSigEl->children[0]->value.constant->val.u32v[0];
+          // SV_Position is 3
+          if(systemValue == 3)
+            posID = cast<Constant>(sigEl->children[0]->value)->getU32();
+        }
 
         rdcarray<uint32_t> semIndexValues;
 
         // semantic indices
-        const DXIL::Metadata *oldSemIdxs = oldSigEl->children[4];
-        if(oldSemIdxs)
+        if(const Metadata *semIdxs = sigEl->children[4])
         {
-          DXIL::Metadata semanticIndices;
-
           // the semantic index node is a list of constants
-          semanticIndices.children.resize(oldSemIdxs->children.size());
-          for(size_t sidx = 0; sidx < oldSemIdxs->children.size(); sidx++)
-          {
-            DUPLICATE_META_CONSTANT(semanticIndices.children[sidx], i32, oldSemIdxs->children[sidx]);
-            semIndexValues.push_back(oldSemIdxs->children[sidx]->value.constant->val.u32v[0]);
-          }
-
-          // copy the list
-          newSigEl.children[4] = editor.AddMetadata(semanticIndices);
+          for(size_t sidx = 0; sidx < semIdxs->children.size(); sidx++)
+            semIndexValues.push_back(cast<Constant>(semIdxs->children[sidx]->value)->getU32());
         }
 
         size_t tableOffset = ~0U;
@@ -555,40 +523,6 @@ void D3D12Replay::PatchQuadWritePS(D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC &pi
         }
 
         semanticIndexTableOffsets.push_back((uint32_t)tableOffset);
-
-        // interpolation mode
-        DUPLICATE_META_CONSTANT(newSigEl.children[5], i8, oldSigEl->children[5]);
-
-        // number of rows
-        DUPLICATE_META_CONSTANT(newSigEl.children[6], i32, oldSigEl->children[6]);
-
-        // number of columns
-        DUPLICATE_META_CONSTANT(newSigEl.children[7], i8, oldSigEl->children[7]);
-
-        // start row
-        DUPLICATE_META_CONSTANT(newSigEl.children[8], i32, oldSigEl->children[8]);
-
-        // start column
-        DUPLICATE_META_CONSTANT(newSigEl.children[9], i8, oldSigEl->children[9]);
-
-        // the extra tag/thing list is also a series of ints
-        const DXIL::Metadata *oldTagList = oldSigEl->children[10];
-        if(oldTagList)
-        {
-          DXIL::Metadata tagList;
-
-          // the semantic index node is a list of constants
-          tagList.children.resize(oldTagList->children.size());
-          for(size_t sidx = 0; sidx < oldTagList->children.size(); sidx++)
-          {
-            DUPLICATE_META_CONSTANT(tagList.children[sidx], i32, oldTagList->children[sidx]);
-          }
-
-          // copy the list
-          newSigEl.children[10] = editor.AddMetadata(tagList);
-        }
-
-        inputSig.children.push_back(editor.AddMetadata(newSigEl));
       }
 
       if(posID == ~0U)
@@ -597,16 +531,7 @@ void D3D12Replay::PatchQuadWritePS(D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC &pi
         return;
       }
 
-      // recreate input signature list, for backwards references
-      sigs->children[0] = editor.AddMetadata(inputSig);
-
-      // recreate backwards upwards
-      sigs = editor.AddMetadata(*sigs);
-      entry->children[2] = sigs;
-      entry = editor.AddMetadata(*entry);
-      entryPoints->children[0] = entry;
-
-      DXIL::Function *f = editor.GetFunctionByName(entryName);
+      Function *f = editor.GetFunctionByName(entryName);
 
       if(!f)
       {
@@ -614,15 +539,15 @@ void D3D12Replay::PatchQuadWritePS(D3D12_EXPANDED_PIPELINE_STATE_STREAM_DESC &pi
         return;
       }
 
-      DXIL::Value inputIDValue(editor.GetOrAddConstant(f, DXIL::Constant(i32, posID)));
+      Value *inputIDValue = editor.CreateConstant(posID);
 
       // now locate the loadInputs and patch the row they refer to. We can unconditionally patch
       // them all as there was only one input previously
       for(size_t i = 0; i < f->instructions.size(); i++)
       {
-        DXIL::Instruction &inst = f->instructions[i];
+        Instruction &inst = *f->instructions[i];
 
-        if(inst.op == DXIL::Operation::Call && inst.funcCall->name == "dx.op.loadInput.f32")
+        if(inst.op == Operation::Call && inst.getFuncCall()->name == "dx.op.loadInput.f32")
         {
           if(inst.args.size() != 5)
           {
@@ -1031,7 +956,7 @@ RenderOutputSubresource D3D12Replay::GetRenderOutputSubresource(ResourceId id)
     }
   }
 
-  if(id == rs.dsv.GetResResourceId())
+  if(id == rs.dsv.GetResResourceId() && rs.dsv.GetResResourceId() != ResourceId())
   {
     FillResourceView(view, &rs.dsv);
     return RenderOutputSubresource(view.firstMip, view.firstSlice, view.numSlices);
@@ -1043,7 +968,13 @@ RenderOutputSubresource D3D12Replay::GetRenderOutputSubresource(ResourceId id)
 ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, DebugOverlay overlay,
                                       uint32_t eventId, const rdcarray<uint32_t> &passEvents)
 {
-  ID3D12Resource *resource = m_pDevice->GetResourceList()[texid];
+  ID3D12Resource *resource = NULL;
+
+  {
+    auto it = m_pDevice->GetResourceList().find(texid);
+    if(it != m_pDevice->GetResourceList().end())
+      resource = it->second;
+  }
 
   if(resource == NULL)
     return ResourceId();
@@ -1060,10 +991,6 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
                                   StringFormat::Fmt("RenderOverlay %d", overlay));
 
   D3D12_RESOURCE_DESC resourceDesc = resource->GetDesc();
-
-  rdcarray<D3D12_RESOURCE_BARRIER> barriers;
-  int resType = 0;
-  GetDebugManager()->PrepareTextureSampling(resource, CompType::Float, resType, barriers);
 
   D3D12_RESOURCE_DESC overlayTexDesc;
   overlayTexDesc.Alignment = 0;
@@ -1154,43 +1081,19 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
 
     renderDepth->SetName(L"Overlay renderDepth");
 
-    ID3D12GraphicsCommandList *list = m_pDevice->GetNewList();
+    ID3D12GraphicsCommandListX *list = m_pDevice->GetNewList();
     if(!list)
       return ResourceId();
 
-    const rdcarray<D3D12_RESOURCE_STATES> &states =
-        m_pDevice->GetSubresourceStates(GetResID(realDepth));
+    BarrierSet barriers;
+    barriers.Configure(realDepth, m_pDevice->GetSubresourceStates(GetResID(realDepth)),
+                       BarrierSet::CopySourceAccess);
 
-    rdcarray<D3D12_RESOURCE_BARRIER> depthBarriers;
-    depthBarriers.reserve(states.size());
-    for(size_t i = 0; i < states.size(); i++)
-    {
-      D3D12_RESOURCE_BARRIER b;
-
-      // skip unneeded barriers
-      if(states[i] & D3D12_RESOURCE_STATE_COPY_SOURCE)
-        continue;
-
-      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-      b.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-      b.Transition.pResource = realDepth;
-      b.Transition.Subresource = (UINT)i;
-      b.Transition.StateBefore = states[i];
-      b.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-
-      depthBarriers.push_back(b);
-    }
-
-    if(!depthBarriers.empty())
-      list->ResourceBarrier((UINT)depthBarriers.size(), &depthBarriers[0]);
+    barriers.Apply(list);
 
     list->CopyResource(renderDepth, realDepth);
 
-    for(size_t i = 0; i < depthBarriers.size(); i++)
-      std::swap(depthBarriers[i].Transition.StateBefore, depthBarriers[i].Transition.StateAfter);
-
-    if(!depthBarriers.empty())
-      list->ResourceBarrier((UINT)depthBarriers.size(), &depthBarriers[0]);
+    barriers.Unapply(list);
 
     D3D12_RESOURCE_BARRIER b = {};
 
@@ -1296,8 +1199,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
       psoDesc.RasterizerState.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
       psoDesc.RasterizerState.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
       psoDesc.RasterizerState.DepthClipEnable = FALSE;
-      psoDesc.RasterizerState.MultisampleEnable = FALSE;
-      psoDesc.RasterizerState.AntialiasedLineEnable = FALSE;
+      psoDesc.RasterizerState.LineRasterizationMode = D3D12_LINE_RASTERIZATION_MODE_ALIASED;
 
       float clearColour[] = {0.0f, 0.0f, 0.0f, 0.5f};
       list->ClearRenderTargetView(rtv, clearColour, 0, NULL);
@@ -1386,8 +1288,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
       psoDesc.RasterizerState.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
       psoDesc.RasterizerState.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
       psoDesc.RasterizerState.DepthClipEnable = FALSE;
-      psoDesc.RasterizerState.MultisampleEnable = FALSE;
-      psoDesc.RasterizerState.AntialiasedLineEnable = FALSE;
+      psoDesc.RasterizerState.LineRasterizationMode = D3D12_LINE_RASTERIZATION_MODE_ALIASED;
 
       float clearColour[] = {0.0f, 0.0f, 0.0f, 0.0f};
       list->ClearRenderTargetView(rtv, clearColour, 0, NULL);
@@ -1494,8 +1395,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
       psoDesc.RasterizerState.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
       psoDesc.RasterizerState.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
       psoDesc.RasterizerState.DepthClipEnable = FALSE;
-      psoDesc.RasterizerState.MultisampleEnable = FALSE;
-      psoDesc.RasterizerState.AntialiasedLineEnable = FALSE;
+      psoDesc.RasterizerState.LineRasterizationMode = D3D12_LINE_RASTERIZATION_MODE_ALIASED;
 
       float wireClearCol[4] = {200.0f / 255.0f, 255.0f / 255.0f, 0.0f / 255.0f, 0.0f};
       list->ClearRenderTargetView(rtv, wireClearCol, 0, NULL);
@@ -1651,8 +1551,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
       psoDesc.RasterizerState.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
       psoDesc.RasterizerState.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
       psoDesc.RasterizerState.DepthClipEnable = FALSE;
-      psoDesc.RasterizerState.MultisampleEnable = FALSE;
-      psoDesc.RasterizerState.AntialiasedLineEnable = FALSE;
+      psoDesc.RasterizerState.LineRasterizationMode = D3D12_LINE_RASTERIZATION_MODE_ALIASED;
 
       psoDesc.PS.pShaderBytecode = red->GetBufferPointer();
       psoDesc.PS.BytecodeLength = red->GetBufferSize();
@@ -2076,10 +1975,11 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
       list->Close();
       list = NULL;
 
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-      m_pDevice->ExecuteLists();
-      m_pDevice->FlushLists();
-#endif
+      if(D3D12_Debug_SingleSubmitFlushing())
+      {
+        m_pDevice->ExecuteLists();
+        m_pDevice->FlushLists();
+      }
 
       m_pDevice->ReplayLog(0, events[0], eReplay_WithoutDraw);
 
@@ -2232,8 +2132,7 @@ ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FloatVector clearCol, De
       psoDesc.BlendState.RenderTarget[0].LogicOpEnable = FALSE;
 
       psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-      psoDesc.RasterizerState.MultisampleEnable = FALSE;
-      psoDesc.RasterizerState.AntialiasedLineEnable = FALSE;
+      psoDesc.RasterizerState.LineRasterizationMode = D3D12_LINE_RASTERIZATION_MODE_ALIASED;
 
       float clearColour[] = {0.0f, 0.0f, 0.0f, 0.0f};
       list->ClearRenderTargetView(rtv, clearColour, 0, NULL);

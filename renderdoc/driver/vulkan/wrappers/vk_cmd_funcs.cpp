@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -86,15 +86,18 @@ void WrappedVulkan::AddImplicitResolveResourceUsage(uint32_t subpass)
         EventUsage(m_BakedCmdBufferInfo[m_LastCmdBufferID].curEventID, ResourceUsage::ResolveSrc)));
   }
 
-  // also add any discards
-  for(size_t i = 0; i < rpinfo.attachments.size(); i++)
+  // also add any discards on the final subpass
+  if(subpass + 1 == rpinfo.subpasses.size())
   {
-    if(rpinfo.attachments[i].storeOp == VK_ATTACHMENT_STORE_OP_DONT_CARE)
+    for(size_t i = 0; i < rpinfo.attachments.size(); i++)
     {
-      ResourceId image = m_CreationInfo.m_ImageView[fbattachments[i]].image;
-      m_BakedCmdBufferInfo[m_LastCmdBufferID].resourceUsage.push_back(make_rdcpair(
-          image,
-          EventUsage(m_BakedCmdBufferInfo[m_LastCmdBufferID].curEventID, ResourceUsage::Discard)));
+      if(rpinfo.attachments[i].storeOp == VK_ATTACHMENT_STORE_OP_DONT_CARE)
+      {
+        ResourceId image = m_CreationInfo.m_ImageView[fbattachments[i]].image;
+        m_BakedCmdBufferInfo[m_LastCmdBufferID].resourceUsage.push_back(make_rdcpair(
+            image,
+            EventUsage(m_BakedCmdBufferInfo[m_LastCmdBufferID].curEventID, ResourceUsage::Discard)));
+      }
     }
   }
 }
@@ -324,6 +327,11 @@ rdcarray<VkImageMemoryBarrier> WrappedVulkan::GetImplicitRenderPassBarriers(uint
         break;
       }
     }
+
+    SanitiseOldImageLayout(barrier.oldLayout);
+    SanitiseNewImageLayout(barrier.newLayout);
+    SanitiseOldImageLayout(barrierStencil.oldLayout);
+    SanitiseNewImageLayout(barrierStencil.newLayout);
 
     // if we support separate depth stencil and the format contains stencil, add barriers
     // separately
@@ -746,12 +754,12 @@ void WrappedVulkan::ApplyRPLoadDiscards(VkCommandBuffer commandBuffer, VkRect2D 
         VkImageSubresourceRange range = viewInfo.range;
 
         range.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-        if(depthDontCareLoad)
+        if(depthDontCareLoad && (viewInfo.range.aspectMask & range.aspectMask) != 0)
           GetDebugManager()->FillWithDiscardPattern(commandBuffer, DiscardType::RenderPassLoad,
                                                     image, initialLayout, range, renderArea);
 
         range.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
-        if(stencilDontCareLoad)
+        if(stencilDontCareLoad && (viewInfo.range.aspectMask & range.aspectMask) != 0)
           GetDebugManager()->FillWithDiscardPattern(commandBuffer, DiscardType::RenderPassLoad,
                                                     image, initialLayout, range, renderArea);
       }
@@ -1121,13 +1129,20 @@ bool WrappedVulkan::Serialise_vkBeginCommandBuffer(SerialiserType &ser, VkComman
 
       if(m_ActionCallback && m_ActionCallback->ForceLoadRPs())
       {
-        const VulkanCreationInfo::RenderPass &rpinfo =
-            m_CreationInfo.m_RenderPass[GetResID(unwrappedInheritInfo.renderPass)];
-        const VulkanCreationInfo::Framebuffer &fbinfo =
-            m_CreationInfo.m_Framebuffer[GetResID(unwrappedInheritInfo.framebuffer)];
+        if(unwrappedInheritInfo.framebuffer != VK_NULL_HANDLE)
+        {
+          const VulkanCreationInfo::Framebuffer &fbinfo =
+              m_CreationInfo.m_Framebuffer[GetResID(unwrappedInheritInfo.framebuffer)];
 
-        unwrappedInheritInfo.framebuffer = Unwrap(fbinfo.loadFBs[unwrappedInheritInfo.subpass]);
-        unwrappedInheritInfo.renderPass = Unwrap(rpinfo.loadRPs[unwrappedInheritInfo.subpass]);
+          unwrappedInheritInfo.framebuffer = Unwrap(fbinfo.loadFBs[unwrappedInheritInfo.subpass]);
+        }
+
+        if(unwrappedInheritInfo.renderPass != VK_NULL_HANDLE)
+        {
+          const VulkanCreationInfo::RenderPass &rpinfo =
+              m_CreationInfo.m_RenderPass[GetResID(unwrappedInheritInfo.renderPass)];
+          unwrappedInheritInfo.renderPass = Unwrap(rpinfo.loadRPs[unwrappedInheritInfo.subpass]);
+        }
       }
       else
       {
@@ -1962,7 +1977,8 @@ bool WrappedVulkan::Serialise_vkCmdBeginRenderPass(SerialiserType &ser, VkComman
               image, EventUsage(m_BakedCmdBufferInfo[m_LastCmdBufferID].curEventID,
                                 rpinfo.attachments[i].loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR
                                     ? ResourceUsage::Clear
-                                    : ResourceUsage::Discard)));
+                                    : ResourceUsage::Discard,
+                                fbattachments[i])));
         }
       }
 
@@ -2288,13 +2304,13 @@ bool WrappedVulkan::Serialise_vkCmdEndRenderPass(SerialiserType &ser, VkCommandB
                 VkImageSubresourceRange range = viewInfo.range;
 
                 range.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-                if(depthDontCareStore)
+                if(depthDontCareStore && (viewInfo.range.aspectMask & range.aspectMask) != 0)
                   GetDebugManager()->FillWithDiscardPattern(
                       commandBuffer, DiscardType::RenderPassStore, image,
                       rpinfo.attachments[i].finalLayout, range, renderArea);
 
                 range.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
-                if(stencilDontCareStore)
+                if(stencilDontCareStore && (viewInfo.range.aspectMask & range.aspectMask) != 0)
                   GetDebugManager()->FillWithDiscardPattern(
                       commandBuffer, DiscardType::RenderPassStore, image,
                       rpinfo.attachments[i].finalLayout, range, renderArea);
@@ -2616,7 +2632,8 @@ bool WrappedVulkan::Serialise_vkCmdBeginRenderPass2(SerialiserType &ser,
               image, EventUsage(m_BakedCmdBufferInfo[m_LastCmdBufferID].curEventID,
                                 rpinfo.attachments[i].loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR
                                     ? ResourceUsage::Clear
-                                    : ResourceUsage::Discard)));
+                                    : ResourceUsage::Discard,
+                                fbattachments[i])));
         }
       }
 
@@ -3278,6 +3295,15 @@ bool WrappedVulkan::Serialise_vkCmdBindPipeline(SerialiserType &ser, VkCommandBu
                 renderstate.vertexBindings[i].stride = pipeInfo.vertexBindings[i].bytestride;
                 renderstate.vertexBindings[i].divisor = pipeInfo.vertexBindings[i].instanceDivisor;
               }
+            }
+            if(!pipeInfo.dynamicStates[VkDynamicAttachmentFeedbackLoopEnableEXT])
+            {
+              renderstate.feedbackAspects = VK_IMAGE_ASPECT_NONE;
+              if(pipeInfo.flags & VK_PIPELINE_CREATE_COLOR_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT)
+                renderstate.feedbackAspects |= VK_IMAGE_ASPECT_COLOR_BIT;
+              if(pipeInfo.flags & VK_PIPELINE_CREATE_DEPTH_STENCIL_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT)
+                renderstate.feedbackAspects |=
+                    VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
             }
           }
         }
@@ -6935,14 +6961,20 @@ bool WrappedVulkan::Serialise_vkCmdBeginRendering(SerialiserType &ser, VkCommand
            (RenderingInfo.flags & VK_RENDERING_RESUMING_BIT) == 0)
         {
           rdcarray<VkRenderingAttachmentInfo> dynAtts = renderstate.dynamicRendering.color;
-          dynAtts.push_back(renderstate.dynamicRendering.depth);
 
-          size_t depthIdx = dynAtts.size() - 1;
+          size_t depthIdx = ~0U;
           size_t stencilIdx = ~0U;
           VkImageAspectFlags depthAspects = VK_IMAGE_ASPECT_DEPTH_BIT;
 
+          if(renderstate.dynamicRendering.depth.imageView != VK_NULL_HANDLE)
+          {
+            dynAtts.push_back(renderstate.dynamicRendering.depth);
+            depthIdx = dynAtts.size() - 1;
+          }
+
           // if we have different images attached, or different store ops, treat stencil separately
-          if(renderstate.dynamicRendering.stencil.imageView != VK_NULL_HANDLE &&
+          if(renderstate.dynamicRendering.depth.imageView != VK_NULL_HANDLE &&
+             renderstate.dynamicRendering.stencil.imageView != VK_NULL_HANDLE &&
              (renderstate.dynamicRendering.depth.imageView !=
                   renderstate.dynamicRendering.stencil.imageView ||
               renderstate.dynamicRendering.depth.loadOp !=
@@ -6955,6 +6987,12 @@ bool WrappedVulkan::Serialise_vkCmdBeginRendering(SerialiserType &ser, VkCommand
           else if(renderstate.dynamicRendering.stencil.imageView != VK_NULL_HANDLE)
           {
             depthAspects |= VK_IMAGE_ASPECT_STENCIL_BIT;
+
+            if(renderstate.dynamicRendering.depth.imageView == VK_NULL_HANDLE)
+            {
+              dynAtts.push_back(renderstate.dynamicRendering.stencil);
+              stencilIdx = dynAtts.size() - 1;
+            }
           }
 
           for(size_t i = 0; i < dynAtts.size(); i++)
@@ -6973,6 +7011,7 @@ bool WrappedVulkan::Serialise_vkCmdBeginRendering(SerialiserType &ser, VkCommand
               if(i == depthIdx)
                 range.aspectMask = depthAspects;
 
+              // if this is a stencil-only attachment this will override depthAspects
               if(i == stencilIdx)
                 range.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
 
@@ -7110,7 +7149,8 @@ bool WrappedVulkan::Serialise_vkCmdBeginRendering(SerialiserType &ser, VkCommand
           m_BakedCmdBufferInfo[m_LastCmdBufferID].resourceUsage.push_back(make_rdcpair(
               image, EventUsage(m_BakedCmdBufferInfo[m_LastCmdBufferID].curEventID,
                                 att->loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ? ResourceUsage::Clear
-                                                                           : ResourceUsage::Discard)));
+                                                                           : ResourceUsage::Discard,
+                                GetResID(att->imageView))));
         }
       }
 
@@ -7147,6 +7187,28 @@ void WrappedVulkan::vkCmdBeginRendering(VkCommandBuffer commandBuffer,
     Serialise_vkCmdBeginRendering(ser, commandBuffer, pRenderingInfo);
 
     record->AddChunk(scope.Get(&record->cmdInfo->alloc));
+
+    VkRenderingFragmentDensityMapAttachmentInfoEXT *densityMap =
+        (VkRenderingFragmentDensityMapAttachmentInfoEXT *)FindNextStruct(
+            pRenderingInfo, VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_DENSITY_MAP_ATTACHMENT_INFO_EXT);
+
+    if(densityMap)
+    {
+      VkResourceRecord *viewRecord = GetRecord(densityMap->imageView);
+      if(viewRecord)
+        record->MarkImageViewFrameReferenced(viewRecord, ImageRange(), eFrameRef_Read);
+    }
+
+    VkRenderingFragmentShadingRateAttachmentInfoKHR *shadingRate =
+        (VkRenderingFragmentShadingRateAttachmentInfoKHR *)FindNextStruct(
+            pRenderingInfo, VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR);
+
+    if(shadingRate)
+    {
+      VkResourceRecord *viewRecord = GetRecord(shadingRate->imageView);
+      if(viewRecord)
+        record->MarkImageViewFrameReferenced(viewRecord, ImageRange(), eFrameRef_Read);
+    }
 
     for(uint32_t i = 0; i < pRenderingInfo->colorAttachmentCount + 2; i++)
     {

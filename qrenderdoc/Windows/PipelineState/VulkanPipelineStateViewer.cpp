@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -692,6 +692,21 @@ bool VulkanPipelineStateViewer::setViewDetails(RDTreeWidgetItem *node, const bin
 
       viewdetails = true;
     }
+
+    if(tex->depth > 1 && ((tex->depth != view.numSlices && view.numSlices > 0) || view.firstSlice > 0))
+    {
+      if(view.numSlices == 1)
+        text += tr("The texture has %1 3D slices, the view covers slice %2.\n")
+                    .arg(tex->depth)
+                    .arg(view.firstSlice);
+      else
+        text += tr("The texture has %1 3D slices, the view covers slices %2-%3.\n")
+                    .arg(tex->depth)
+                    .arg(view.firstSlice)
+                    .arg(view.firstSlice + view.numSlices);
+
+      viewdetails = true;
+    }
   }
 
   if(minLOD(view) != 0.0f)
@@ -929,6 +944,7 @@ void VulkanPipelineStateViewer::clearState()
 
   ui->pipelineShadingRate->setText(tr("1x1"));
   ui->shadingRateCombiners->setText(tr("Keep, Keep"));
+  ui->provokingVertex->setText(tr("First"));
 
   ui->sampleCount->setText(lit("1"));
   ui->sampleShading->setPixmap(tick);
@@ -1001,11 +1017,20 @@ QVariantList VulkanPipelineStateViewer::makeSampler(const QString &bindset, cons
   addressing += addPrefix + lit(": ") + addVal;
 
   if(descriptor.UseBorder())
-    addressing += QFormatStr(" <%1, %2, %3, %4>")
-                      .arg(descriptor.borderColor[0])
-                      .arg(descriptor.borderColor[1])
-                      .arg(descriptor.borderColor[2])
-                      .arg(descriptor.borderColor[3]);
+  {
+    if(descriptor.borderColorType == CompType::Float)
+      addressing += QFormatStr(" <%1, %2, %3, %4>")
+                        .arg(descriptor.borderColorValue.floatValue[0])
+                        .arg(descriptor.borderColorValue.floatValue[1])
+                        .arg(descriptor.borderColorValue.floatValue[2])
+                        .arg(descriptor.borderColorValue.floatValue[3]);
+    else
+      addressing += QFormatStr(" <%1, %2, %3, %4>")
+                        .arg(descriptor.borderColorValue.uintValue[0])
+                        .arg(descriptor.borderColorValue.uintValue[1])
+                        .arg(descriptor.borderColorValue.uintValue[2])
+                        .arg(descriptor.borderColorValue.uintValue[3]);
+  }
 
   if(descriptor.unnormalized)
     addressing += lit(" (Un-norm)");
@@ -2591,6 +2616,8 @@ void VulkanPipelineStateViewer::setState()
           .arg(ToQStr(state.rasterizer.shadingRateCombiners.first, GraphicsAPI::Vulkan))
           .arg(ToQStr(state.rasterizer.shadingRateCombiners.second, GraphicsAPI::Vulkan)));
 
+  ui->provokingVertex->setText(state.rasterizer.provokingVertexFirst ? tr("First") : tr("Last"));
+
   if(state.currentPass.renderpass.multiviews.isEmpty())
   {
     ui->multiview->setText(tr("Disabled"));
@@ -2853,6 +2880,41 @@ void VulkanPipelineStateViewer::setState()
           if(shadingRateTexelSize.first > 0)
             resName +=
                 tr(" (%1x%2 texels)").arg(shadingRateTexelSize.first).arg(shadingRateTexelSize.second);
+
+          // append if colour or depth/stencil feedback is allowed
+          if(a.type == AttType::Color && state.currentPass.colorFeedbackAllowed)
+          {
+            resName += tr(" (Feedback)");
+          }
+          else if(a.type == AttType::Depth && state.currentPass.depthFeedbackAllowed &&
+                  state.currentPass.stencilFeedbackAllowed)
+          {
+            resName += tr(" (Feedback)");
+          }
+          else if(a.type == AttType::Depth && (state.currentPass.depthFeedbackAllowed ||
+                                               state.currentPass.stencilFeedbackAllowed))
+          {
+            // if only one of depth or stencil is allowed, display that specifically
+            if(tex->format.type == ResourceFormatType::D16S8 ||
+               tex->format.type == ResourceFormatType::D24S8 ||
+               tex->format.type == ResourceFormatType::D32S8)
+            {
+              if(state.currentPass.depthFeedbackAllowed)
+                resName += tr(" (Depth Feedback)");
+              else if(state.currentPass.stencilFeedbackAllowed)
+                resName += tr(" (Depth Feedback)");
+            }
+            else if(tex->format.type == ResourceFormatType::S8 &&
+                    state.currentPass.stencilFeedbackAllowed)
+            {
+              resName += tr(" (Feedback)");
+            }
+            // this case must be depth-only, since depth/stencil and stencil-only are covered above.
+            else if(state.currentPass.depthFeedbackAllowed)
+            {
+              resName += tr(" (Feedback)");
+            }
+          }
 
           node = new RDTreeWidgetItem(
               {slotname, resName, typeName, dimensions, format, samples, QString()});

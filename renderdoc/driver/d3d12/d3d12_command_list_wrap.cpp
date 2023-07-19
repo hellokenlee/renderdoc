@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -62,6 +62,21 @@ ID3D12GraphicsCommandList5 *WrappedID3D12GraphicsCommandList::GetCrackedList5()
 ID3D12GraphicsCommandList6 *WrappedID3D12GraphicsCommandList::GetCrackedList6()
 {
   return Unwrap6(m_Cmd->m_BakedCmdListInfo[m_Cmd->m_LastCmdListID].crackedLists.back());
+}
+
+ID3D12GraphicsCommandList7 *WrappedID3D12GraphicsCommandList::GetCrackedList7()
+{
+  return Unwrap7(m_Cmd->m_BakedCmdListInfo[m_Cmd->m_LastCmdListID].crackedLists.back());
+}
+
+ID3D12GraphicsCommandList8 *WrappedID3D12GraphicsCommandList::GetCrackedList8()
+{
+  return Unwrap8(m_Cmd->m_BakedCmdListInfo[m_Cmd->m_LastCmdListID].crackedLists.back());
+}
+
+ID3D12GraphicsCommandList9 *WrappedID3D12GraphicsCommandList::GetCrackedList9()
+{
+  return Unwrap9(m_Cmd->m_BakedCmdListInfo[m_Cmd->m_LastCmdListID].crackedLists.back());
 }
 
 ID3D12GraphicsCommandListX *WrappedID3D12GraphicsCommandList::GetWrappedCrackedList()
@@ -295,6 +310,18 @@ bool WrappedID3D12GraphicsCommandList::Serialise_Reset(SerialiserType &ser,
       state.m_DebugManager = m_pDevice->GetDebugManager();
       state.pipe = GetResID(pInitialState);
 
+      if(state.pipe != ResourceId())
+      {
+        WrappedID3D12PipelineState *pipe = (WrappedID3D12PipelineState *)pInitialState;
+        if(pipe->IsGraphics())
+        {
+          state.depthBias = pipe->graphics->RasterizerState.DepthBias;
+          state.depthBiasClamp = pipe->graphics->RasterizerState.DepthBiasClamp;
+          state.slopeScaledDepthBias = pipe->graphics->RasterizerState.SlopeScaledDepthBias;
+          state.cutValue = pipe->graphics->IBStripCutValue;
+        }
+      }
+
       // whenever a command-building chunk asks for the command list, it
       // will get our baked version.
       if(GetResourceManager()->HasReplacement(CommandList))
@@ -308,6 +335,8 @@ bool WrappedID3D12GraphicsCommandList::Serialise_Reset(SerialiserType &ser,
           m_Cmd->m_BakedCmdListInfo[BakedCommandList].curEventID = 0;
       m_Cmd->m_BakedCmdListInfo[CommandList].executeEvents =
           m_Cmd->m_BakedCmdListInfo[BakedCommandList].executeEvents;
+      m_Cmd->m_BakedCmdListInfo[CommandList].barriers.clear();
+      m_Cmd->m_BakedCmdListInfo[BakedCommandList].barriers.clear();
     }
     else
     {
@@ -373,6 +402,8 @@ bool WrappedID3D12GraphicsCommandList::Serialise_Reset(SerialiserType &ser,
             m_Cmd->m_BakedCmdListInfo[BakedCommandList].nodeMask = nodeMask;
         m_Cmd->m_BakedCmdListInfo[CommandList].allocator =
             m_Cmd->m_BakedCmdListInfo[BakedCommandList].allocator = GetResID(pAllocator);
+        m_Cmd->m_BakedCmdListInfo[CommandList].barriers.clear();
+        m_Cmd->m_BakedCmdListInfo[BakedCommandList].barriers.clear();
 
         // On list execute we increment all child events/actions by
         // m_RootEventID and insert them into the tree.
@@ -391,6 +422,18 @@ bool WrappedID3D12GraphicsCommandList::Serialise_Reset(SerialiserType &ser,
         state.m_ResourceManager = GetResourceManager();
         state.m_DebugManager = m_pDevice->GetDebugManager();
         state.pipe = GetResID(pInitialState);
+
+        if(state.pipe != ResourceId())
+        {
+          WrappedID3D12PipelineState *pipe = (WrappedID3D12PipelineState *)pInitialState;
+          if(pipe->IsGraphics())
+          {
+            state.depthBias = pipe->graphics->RasterizerState.DepthBias;
+            state.depthBiasClamp = pipe->graphics->RasterizerState.DepthBiasClamp;
+            state.slopeScaledDepthBias = pipe->graphics->RasterizerState.SlopeScaledDepthBias;
+            state.cutValue = pipe->graphics->IBStripCutValue;
+          }
+        }
       }
     }
   }
@@ -567,7 +610,7 @@ bool WrappedID3D12GraphicsCommandList::Serialise_ResourceBarrier(
         if(pBarriers[i].Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION ||
            pBarriers[i].Transition.pResource)
         {
-          m_Cmd->m_BakedCmdListInfo[cmd].barriers.push_back(pBarriers[i]);
+          m_Cmd->m_BakedCmdListInfo[cmd].barriers.barriers.push_back(pBarriers[i]);
         }
       }
     }
@@ -610,7 +653,7 @@ void WrappedID3D12GraphicsCommandList::ResourceBarrier(UINT NumBarriers,
 
     m_ListRecord->AddChunk(scope.Get(m_ListRecord->cmdInfo->alloc));
 
-    m_ListRecord->cmdInfo->barriers.append(pBarriers, NumBarriers);
+    m_ListRecord->cmdInfo->barriers.barriers.append(pBarriers, NumBarriers);
   }
 }
 
@@ -661,6 +704,18 @@ bool WrappedID3D12GraphicsCommandList::Serialise_ClearState(SerialiserType &ser,
       state.m_DebugManager = m_pDevice->GetDebugManager();
       state.m_ResourceManager = m_pDevice->GetResourceManager();
       state.pipe = GetResID(pPipelineState);
+
+      if(state.pipe != ResourceId())
+      {
+        WrappedID3D12PipelineState *pipe = (WrappedID3D12PipelineState *)pPipelineState;
+        if(pipe->IsGraphics())
+        {
+          state.depthBias = pipe->graphics->RasterizerState.DepthBias;
+          state.depthBiasClamp = pipe->graphics->RasterizerState.DepthBiasClamp;
+          state.slopeScaledDepthBias = pipe->graphics->RasterizerState.SlopeScaledDepthBias;
+          state.cutValue = pipe->graphics->IBStripCutValue;
+        }
+      }
     }
   }
 
@@ -976,7 +1031,10 @@ bool WrappedID3D12GraphicsCommandList::Serialise_OMSetStencilRef(SerialiserType 
     }
 
     if(stateUpdate)
-      m_Cmd->m_BakedCmdListInfo[m_Cmd->m_LastCmdListID].state.stencilRef = StencilRef;
+    {
+      D3D12RenderState &rs = m_Cmd->m_BakedCmdListInfo[m_Cmd->m_LastCmdListID].state;
+      rs.stencilRefFront = rs.stencilRefBack = StencilRef;
+    }
   }
 
   return true;
@@ -1356,7 +1414,22 @@ bool WrappedID3D12GraphicsCommandList::Serialise_SetPipelineState(SerialiserType
     }
 
     if(stateUpdate)
-      m_Cmd->m_BakedCmdListInfo[m_Cmd->m_LastCmdListID].state.pipe = GetResID(pPipelineState);
+    {
+      D3D12RenderState &state = m_Cmd->m_BakedCmdListInfo[m_Cmd->m_LastCmdListID].state;
+      state.pipe = GetResID(pPipelineState);
+
+      if(pPipelineState)
+      {
+        WrappedID3D12PipelineState *pipe = (WrappedID3D12PipelineState *)pPipelineState;
+        if(pipe->IsGraphics())
+        {
+          state.depthBias = pipe->graphics->RasterizerState.DepthBias;
+          state.depthBiasClamp = pipe->graphics->RasterizerState.DepthBiasClamp;
+          state.slopeScaledDepthBias = pipe->graphics->RasterizerState.SlopeScaledDepthBias;
+          state.cutValue = pipe->graphics->IBStripCutValue;
+        }
+      }
+    }
   }
 
   return true;
@@ -4387,9 +4460,41 @@ bool WrappedID3D12GraphicsCommandList::Serialise_ExecuteIndirect(
 
       UINT barrierCount = 2;
 
-      if(m_pDevice->GetSubresourceStates(GetResID(pArgumentBuffer))[0] &
-         D3D12_RESOURCE_STATE_COPY_SOURCE)
+      D3D12ResourceLayout layout = m_pDevice->GetSubresourceStates(GetResID(pArgumentBuffer))[0];
+      // with new barriers (layouts) we don't need a layout change but we do need a new-style
+      // barrier
+      if(layout.IsLayout())
+      {
         barrierCount = 1;
+
+        ID3D12GraphicsCommandList7 *list7 = GetCrackedList7();
+
+        if(list7)
+        {
+          D3D12_BUFFER_BARRIER buf;
+          buf.pResource = Unwrap(pArgumentBuffer);
+          buf.Offset = 0;
+          buf.Size = UINT64_MAX;
+          buf.SyncBefore = D3D12_BARRIER_SYNC_ALL;
+          buf.SyncAfter = D3D12_BARRIER_SYNC_COPY;
+          buf.AccessBefore = D3D12_BARRIER_ACCESS_COMMON;
+          buf.AccessAfter = D3D12_BARRIER_ACCESS_COPY_SOURCE;
+
+          D3D12_BARRIER_GROUP group;
+          group.NumBarriers = 1;
+          group.Type = D3D12_BARRIER_TYPE_BUFFER;
+          group.pBufferBarriers = &buf;
+          list7->Barrier(1, &group);
+        }
+        else
+        {
+          RDCERR("Encountered new layout at ExecuteIndirect time but couldn't get cracked list 7");
+        }
+      }
+      else if(layout.ToStates() & D3D12_RESOURCE_STATE_COPY_SOURCE)
+      {
+        barrierCount = 1;
+      }
 
       cracked->ResourceBarrier(barrierCount, barriers);
 
@@ -4399,6 +4504,29 @@ bool WrappedID3D12GraphicsCommandList::Serialise_ExecuteIndirect(
       std::swap(barriers[0].Transition.StateBefore, barriers[0].Transition.StateAfter);
       std::swap(barriers[1].Transition.StateBefore, barriers[1].Transition.StateAfter);
       cracked->ResourceBarrier(barrierCount, barriers);
+
+      if(layout.IsLayout())
+      {
+        ID3D12GraphicsCommandList7 *list7 = GetCrackedList7();
+
+        if(list7)
+        {
+          D3D12_BUFFER_BARRIER buf;
+          buf.pResource = Unwrap(pArgumentBuffer);
+          buf.Offset = 0;
+          buf.Size = UINT64_MAX;
+          buf.SyncBefore = D3D12_BARRIER_SYNC_COPY;
+          buf.SyncAfter = D3D12_BARRIER_SYNC_ALL;
+          buf.AccessBefore = D3D12_BARRIER_ACCESS_COPY_SOURCE;
+          buf.AccessAfter = D3D12_BARRIER_ACCESS_COMMON;
+
+          D3D12_BARRIER_GROUP group;
+          group.NumBarriers = 1;
+          group.Type = D3D12_BARRIER_TYPE_BUFFER;
+          group.pBufferBarriers = &buf;
+          list7->Barrier(1, &group);
+        }
+      }
 
       cracked->Close();
 
@@ -4945,7 +5073,7 @@ bool WrappedID3D12GraphicsCommandList::Serialise_DiscardResource(SerialiserType 
           m_pDevice->GetDebugManager()->FillWithDiscardPattern(
               m_Cmd->RerecordCmdList(m_Cmd->m_LastCmdListID),
               m_Cmd->m_BakedCmdListInfo[m_Cmd->m_LastCmdListID].state, DiscardType::DiscardCall,
-              pResource, pRegion);
+              pResource, pRegion, D3D12_BARRIER_LAYOUT_UNDEFINED);
         }
       }
     }

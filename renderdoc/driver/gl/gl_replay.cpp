@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -43,7 +43,6 @@
 
 RDOC_CONFIG(bool, OpenGL_HardwareCounters, true,
             "Enable support for IHV-specific hardware counters on OpenGL.");
-RDOC_CONFIG(bool, OpenGL_PixelHistory, false, "Enable Pixel History on OpenGL (WIP).");
 
 static const char *SPIRVDisassemblyTarget = "SPIR-V (RenderDoc)";
 
@@ -224,7 +223,7 @@ APIProperties GLReplay::GetAPIProperties()
   ret.degraded = m_Degraded;
   ret.vendor = m_DriverInfo.vendor;
   ret.shadersMutable = true;
-  ret.pixelHistory = OpenGL_PixelHistory();
+  ret.pixelHistory = true;
 
   return ret;
 }
@@ -965,12 +964,12 @@ void GLReplay::SavePipelineState(uint32_t eventId)
       case eGL_INT_2_10_10_10_REV:
         fmt.type = ResourceFormatType::R10G10B10A2;
         fmt.compCount = 4;
-        fmt.compType = CompType::UInt;
+        fmt.compType = CompType::SInt;
         break;
       case eGL_UNSIGNED_INT_2_10_10_10_REV:
         fmt.type = ResourceFormatType::R10G10B10A2;
         fmt.compCount = 4;
-        fmt.compType = CompType::SInt;
+        fmt.compType = CompType::UInt;
         break;
       case eGL_UNSIGNED_INT_10F_11F_11F_REV:
         fmt.type = ResourceFormatType::R11G11B10;
@@ -2613,7 +2612,7 @@ void GLReplay::GetTextureData(ResourceId tex, const Subresource &sub,
       }
 
       // do one more time for the stencil
-      if(baseFormat == eGL_DEPTH_STENCIL)
+      if(baseFormat == eGL_DEPTH_STENCIL || baseFormat == eGL_STENCIL_INDEX)
       {
         TextureDisplay texDisplay;
 
@@ -2641,6 +2640,8 @@ void GLReplay::GetTextureData(ResourceId tex, const Subresource &sub,
         GLboolean color_mask[4];
         drv.glGetBooleanv(eGL_COLOR_WRITEMASK, color_mask);
         drv.glColorMask(GL_FALSE, GL_TRUE, GL_FALSE, GL_FALSE);
+        if(baseFormat == eGL_STENCIL_INDEX)
+          drv.glColorMask(GL_TRUE, GL_TRUE, GL_FALSE, GL_FALSE);
 
         flags = TexDisplayFlags(
             flags & ~(eTexDisplay_RemapFloat | eTexDisplay_RemapUInt | eTexDisplay_RemapSInt));

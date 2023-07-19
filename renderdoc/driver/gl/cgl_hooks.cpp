@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -147,14 +147,14 @@ CGLError GL_EXPORT_NAME(CGLSetCurrentContext)(CGLContextObj ctx)
       CGL.CGSGetSurfaceBounds(conn, window, surface, &rect);
     }
 
-    cglhook.driver.ActivateContext(data);
-
     if(data.ctx)
     {
       GLInitParams &params = cglhook.driver.GetInitParams(data);
       params.width = (uint32_t)rect.size.width;
       params.height = (uint32_t)rect.size.height;
     }
+
+    cglhook.driver.ActivateContext(data);
   }
 
   return ret;

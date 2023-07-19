@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -47,7 +47,8 @@ struct BindingElement
            filter == o.filter && addressU == o.addressU && addressV == o.addressV &&
            addressW == o.addressW && mipBias == o.mipBias && maxAnisotropy == o.maxAnisotropy &&
            compareFunction == o.compareFunction && minLOD == o.minLOD && maxLOD == o.maxLOD &&
-           borderColor == o.borderColor && unnormalized == o.unnormalized &&
+           borderColorValue.uintValue == o.borderColorValue.uintValue &&
+           borderColorType == o.borderColorType && unnormalized == o.unnormalized &&
            srgbBorder == o.srgbBorder && seamless == o.seamless;
   }
   bool operator<(const BindingElement &o) const
@@ -100,8 +101,10 @@ struct BindingElement
       return minLOD < o.minLOD;
     if(!(maxLOD == o.maxLOD))
       return maxLOD < o.maxLOD;
-    if(!(borderColor == o.borderColor))
-      return borderColor < o.borderColor;
+    if(!(borderColorValue.uintValue == o.borderColorValue.uintValue))
+      return borderColorValue.uintValue < o.borderColorValue.uintValue;
+    if(!(borderColorType == o.borderColorType))
+      return borderColorType < o.borderColorType;
     if(!(unnormalized == o.unnormalized))
       return unnormalized < o.unnormalized;
     if(!(srgbBorder == o.srgbBorder))
@@ -183,11 +186,18 @@ set's inline block data.
   float minLOD = 0.0f;
   DOCUMENT("For samplers - the maximum mip level that can be used.");
   float maxLOD = 0.0f;
-  DOCUMENT(R"(For samplers - the RGBA border color.
+  DOCUMENT(R"(For samplers - the RGBA border color value. Typically the float tuple inside will be used,
+but the exact component type can be checked with :data:`borderColorType`.
 
-:type: Tuple[float,float,float,float]
+:type: PixelValue
 )");
-  rdcfixedarray<float, 4> borderColor = {0.0f, 0.0f, 0.0f, 0.0f};
+  PixelValue borderColorValue = {};
+  DOCUMENT(R"(For samplers - the RGBA border color type. This determines how the data in
+:data:`borderColorValue` will be interpreted.
+
+:type: CompType
+)");
+  CompType borderColorType = CompType::Float;
   DOCUMENT(R"(The swizzle applied to samplers. Primarily for ycbcr samplers applied before
 conversion but for non-ycbcr samplers can be used for implementations that require sampler swizzle
 information for border colors.
@@ -845,6 +855,8 @@ See :data:`conservativeRasterizationMode`
 )");
   float extraPrimitiveOverestimationSize = 0.0f;
 
+  DOCUMENT("Whether the provoking vertex is the first one (default behaviour).");
+  bool provokingVertexFirst = true;
   DOCUMENT("Whether depth biasing is enabled.");
   bool depthBiasEnable = false;
   DOCUMENT("The fixed depth bias value to apply to z-values.");
@@ -1217,6 +1229,15 @@ struct CurrentPass
 :type: VKRenderArea
 )");
   RenderArea renderArea;
+
+  DOCUMENT("If feedback loops are allowed on color attachments");
+  bool colorFeedbackAllowed = false;
+
+  DOCUMENT("If feedback loops are allowed on depth attachments");
+  bool depthFeedbackAllowed = false;
+
+  DOCUMENT("If feedback loops are allowed on stencil attachments");
+  bool stencilFeedbackAllowed = false;
 };
 
 DOCUMENT("Contains the layout of a range of subresources in an image.");

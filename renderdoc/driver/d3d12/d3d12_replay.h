@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -264,7 +264,7 @@ private:
                         const ShaderBindpointMapping *mappings[(uint32_t)ShaderStage::Count],
                         rdcarray<D3D12Pipe::RootSignatureRange> &rootElements);
   void FillResourceView(D3D12Pipe::View &view, const D3D12Descriptor *desc);
-  void FillSampler(D3D12Pipe::Sampler &view, const D3D12_SAMPLER_DESC &desc);
+  void FillSampler(D3D12Pipe::Sampler &view, const D3D12_SAMPLER_DESC2 &desc);
 
   bool CreateSOBuffers();
   void ClearPostVSCache();

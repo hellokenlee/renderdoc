@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -226,7 +226,7 @@ public:
 
   static void Init(GraphicsAPI api) { m_API = api; }
   static ParsedFormat ParseFormatString(const QString &formatString, uint64_t maxLen, bool cbuffer);
-  static uint32_t GetVarAdvance(Packing::Rules pack, const ShaderConstant &var);
+  static uint32_t GetVarAdvance(const Packing::Rules &pack, const ShaderConstant &var);
 
   static Packing::Rules EstimatePackingRules(ResourceId shader,
                                              const rdcarray<ShaderConstant> &members);

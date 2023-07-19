@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -288,7 +288,7 @@ void ReplayOutput::RefreshOverlay()
   {
     ResourceId id = m_pDevice->GetLiveID(m_RenderData.texDisplay.resourceId);
 
-    if(action && m_pDevice->IsRenderOutput(id))
+    if(id != ResourceId() && action && m_pDevice->IsRenderOutput(id))
     {
       FloatVector f = m_RenderData.texDisplay.backgroundColor;
 
@@ -378,6 +378,9 @@ bytebuf ReplayOutput::DrawThumbnail(int32_t width, int32_t height, ResourceId te
                                     const Subresource &sub, CompType typeCast)
 {
   bytebuf ret;
+
+  width = RDCMAX(width, 1);
+  height = RDCMAX(height, 1);
 
   uint64_t key = (uint64_t(width) << 32) | height;
   int idx = -1;

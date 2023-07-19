@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -51,13 +51,18 @@ enum class StructMemberAnnotation
 template <typename T>
 T getival(const Metadata *m)
 {
-  return T(m->value.constant->val.u32v[0]);
+  Constant *c = cast<Constant>(m->value);
+  if(c && c->isLiteral())
+    return T(c->getU32());
+  return T();
 }
 
 void Program::FetchComputeProperties(DXBC::Reflection *reflection)
 {
-  for(const Function &f : m_Functions)
+  for(size_t i = 0; i < m_Functions.size(); i++)
   {
+    const Function &f = *m_Functions[i];
+
     if(f.name.beginsWith("dx.op.threadId"))
     {
       SigParameter param;
@@ -98,12 +103,13 @@ void Program::FetchComputeProperties(DXBC::Reflection *reflection)
 
   for(size_t i = 0; i < m_NamedMeta.size(); i++)
   {
-    if(m_NamedMeta[i].name == "dx.entryPoints")
+    const NamedMetadata &m = *m_NamedMeta[i];
+    if(m.name == "dx.entryPoints")
     {
       // expect only one child for this, DX doesn't support multiple entry points for compute
       // shaders
-      RDCASSERTEQUAL(m_NamedMeta[i].children.size(), 1);
-      Metadata &entry = *m_NamedMeta[i].children[0];
+      RDCASSERTEQUAL(m.children.size(), 1);
+      Metadata &entry = *m.children[0];
       RDCASSERTEQUAL(entry.children.size(), 5);
       Metadata &tags = *entry.children[4];
 
@@ -139,12 +145,13 @@ D3D_PRIMITIVE_TOPOLOGY Program::GetOutputTopology()
 
   for(size_t i = 0; i < m_NamedMeta.size(); i++)
   {
-    if(m_NamedMeta[i].name == "dx.entryPoints")
+    const NamedMetadata &m = *m_NamedMeta[i];
+    if(m.name == "dx.entryPoints")
     {
       // expect only one child for this, DX doesn't support multiple entry points for compute
       // shaders
-      RDCASSERTEQUAL(m_NamedMeta[i].children.size(), 1);
-      Metadata &entry = *m_NamedMeta[i].children[0];
+      RDCASSERTEQUAL(m.children.size(), 1);
+      Metadata &entry = *m.children[0];
       RDCASSERTEQUAL(entry.children.size(), 5);
       Metadata &tags = *entry.children[4];
 
@@ -189,16 +196,16 @@ struct DXMeta
   // technically llvm.ident
   const Metadata *ident = NULL;
 
-  DXMeta(const rdcarray<NamedMetadata> &namedMeta)
+  DXMeta(const rdcarray<NamedMetadata *> &namedMeta)
   {
     DXMeta &dx = *this;
     DXMeta &llvm = *this;
 
     for(size_t i = 0; i < namedMeta.size(); i++)
     {
-#define GRAB_META(metaname)          \
-  if(namedMeta[i].name == #metaname) \
-    metaname = &namedMeta[i];
+#define GRAB_META(metaname)           \
+  if(namedMeta[i]->name == #metaname) \
+    metaname = namedMeta[i];
 
       GRAB_META(llvm.ident);
       GRAB_META(dx.source.contents);
@@ -240,7 +247,6 @@ struct TypeInfo
 
   struct StructData
   {
-    uint32_t byteSize;
     rdcarray<MemberData> members;
   };
 
@@ -274,7 +280,6 @@ struct TypeInfo
                 structMembers->children.size(), type->members.size());
 
       StructData &data = structData[type];
-      data.byteSize = getival<uint32_t>(structMembers->children[0]);
       data.members.resize(type->members.size());
 
       for(size_t m = 0; m < type->members.size(); m++)
@@ -342,6 +347,27 @@ struct TypeInfo
     }
   }
 };
+
+// a struct is empty if it has no members, or all members are empty structs
+static bool IsEmptyStruct(const Type *t)
+{
+  // base case - a non-struct is defined as 'non-empty' to propagate up
+  if(t->type != Type::Struct)
+    return false;
+
+  // for structs, no members is a trivial empty struct
+  if(t->members.empty())
+    return true;
+
+  // now recurse.
+  // is any member a non-empty struct? if so this is also a non-empty struct
+  for(const Type *m : t->members)
+    if(!IsEmptyStruct(m))
+      return false;
+
+  // no members are non-empty => all members are empty => this is empty
+  return true;
+}
 
 static DXBC::CBufferVariableType MakeCBufferVariableType(const TypeInfo &typeInfo, const Type *t)
 {
@@ -427,122 +453,143 @@ static DXBC::CBufferVariableType MakeCBufferVariableType(const TypeInfo &typeInf
   if(ret.name.beginsWith(classPrefix))
     ret.name.erase(0, sizeof(classPrefix) - 1);
 
-  // if there are no members, return straight away
-  if(t->members.empty())
+  // if this is an empty struct (including recursion), return straight away
+  if(IsEmptyStruct(t))
     return ret;
 
   auto it = typeInfo.structData.find(t);
 
-  if(it != typeInfo.structData.end())
-  {
-    ret.bytesize = it->second.byteSize;
-  }
-  else
+  if(it == typeInfo.structData.end())
   {
     // shouldn't get here if we don't have type information at all
     RDCERR("Couldn't find type information for struct '%s'!", t->name.c_str());
     return ret;
   }
 
+  bool structured = false;
   if(ret.name.contains("StructuredBuffer<"))
   {
-    // silently go into the inner member that's declared in this type as we only care about
-    // reflecting that actual structure
-    if(t->members.size() == 1 && it->second.members.size() == 1 && it->second.members[0].name == "h")
-      return MakeCBufferVariableType(typeInfo, t->members[0]);
+    structured = true;
 
-    RDCWARN("Structured buffer declaration found but expected single inner handle");
+    if(t->members.size() != 1 || it->second.members.size() != 1 || it->second.members[0].name != "h")
+    {
+      RDCWARN("Structured buffer declaration found but expected single inner handle");
 
-    // otherwise use it as-is and trim off the name in an attempt to make it look normal
+      // otherwise use it as-is and trim off the name in an attempt to make it look normal
 
-    ret.name.trim();
+      ret.name.trim();
 
-    // remove any outer definition of the type
-    if(ret.name.back() == '>')
-      ret.name.pop_back();
-    else
-      RDCERR("Expected closing > in StructuredBuffer type name");
+      // remove any outer definition of the type
+      if(ret.name.back() == '>')
+        ret.name.pop_back();
+      else
+        RDCERR("Expected closing > in StructuredBuffer type name");
 
-    int idx = ret.name.indexOf('<');
-    ret.name.erase(0, idx + 1);
+      int idx = ret.name.indexOf('<');
+      ret.name.erase(0, idx + 1);
+    }
   }
 
   for(size_t i = 0; i < t->members.size(); i++)
   {
     CBufferVariable var;
-    var.type = MakeCBufferVariableType(typeInfo, t->members[i]);
-    if(it != typeInfo.structData.end())
+
+    var.name = it->second.members[i].name;
+    var.offset = it->second.members[i].offset;
+
+    const Type *inner = t->members[i];
+    // unpeel any arrays
+    while(inner->type == Type::Array)
+      inner = inner->inner;
+
+    if(var.type.members.empty() &&
+       (inner->type != Type::Struct || (it->second.members[i].flags & TypeInfo::MemberData::Matrix)))
     {
-      var.name = it->second.members[i].name;
-      var.offset = it->second.members[i].offset;
-
-      if(it->second.members[i].flags & TypeInfo::MemberData::Matrix)
+      switch(it->second.members[i].type)
       {
-        var.type.rows = it->second.members[i].rows;
-        var.type.cols = it->second.members[i].cols;
-        var.type.varClass = (it->second.members[i].flags & TypeInfo::MemberData::RowMajor)
-                                ? CLASS_MATRIX_ROWS
-                                : CLASS_MATRIX_COLUMNS;
+        case ComponentType::Invalid:
+          var.type.varType = VarType::Unknown;
+          RDCERR("Unexpected type in cbuffer annotations");
+          break;
+        case ComponentType::I1: var.type.varType = VarType::Bool; break;
+        case ComponentType::I16: var.type.varType = VarType::SShort; break;
+        case ComponentType::U16: var.type.varType = VarType::UShort; break;
+        case ComponentType::I32: var.type.varType = VarType::SInt; break;
+        case ComponentType::U32: var.type.varType = VarType::UInt; break;
+        case ComponentType::I64: var.type.varType = VarType::SLong; break;
+        case ComponentType::U64: var.type.varType = VarType::ULong; break;
+        case ComponentType::F16: var.type.varType = VarType::Half; break;
+        case ComponentType::F32: var.type.varType = VarType::Float; break;
+        case ComponentType::F64: var.type.varType = VarType::Double; break;
+        case ComponentType::SNormF16:
+          var.type.varType = VarType::Half;
+          RDCERR("Unexpected type in cbuffer annotations");
+          break;
+        case ComponentType::UNormF16:
+          var.type.varType = VarType::Half;
+          RDCERR("Unexpected type in cbuffer annotations");
+          break;
+        case ComponentType::SNormF32:
+          var.type.varType = VarType::Float;
+          RDCERR("Unexpected type in cbuffer annotations");
+          break;
+        case ComponentType::UNormF32:
+          var.type.varType = VarType::Float;
+          RDCERR("Unexpected type in cbuffer annotations");
+          break;
+        case ComponentType::SNormF64:
+          var.type.varType = VarType::Double;
+          RDCERR("Unexpected type in cbuffer annotations");
+          break;
+        case ComponentType::UNormF64:
+          var.type.varType = VarType::Double;
+          RDCERR("Unexpected type in cbuffer annotations");
+          break;
+      }
+    }
 
-        // the array was expanded out like float[4][3] would be, so divide by the matrix dimension
-        // to get the real array size
-        var.type.elements /= (it->second.members[i].flags & TypeInfo::MemberData::RowMajor)
-                                 ? var.type.rows
-                                 : var.type.cols;
+    if(it->second.members[i].flags & TypeInfo::MemberData::Matrix)
+    {
+      var.type.elements = 1;
+      const Type *matType = t->members[i];
+      // unpeel any arrays that aren't the last one (that's the matrix array)
+      while(matType->type == Type::Array && matType->inner->type == Type::Array)
+      {
+        var.type.elements *= matType->elemCount;
+        matType = matType->inner;
       }
 
-      if(var.type.members.empty() && t->members[i]->type != Type::Struct)
-      {
-        switch(it->second.members[i].type)
-        {
-          case ComponentType::Invalid:
-            var.type.varType = VarType::Unknown;
-            RDCERR("Unexpected type in cbuffer annotations");
-            break;
-          case ComponentType::I1: var.type.varType = VarType::Bool; break;
-          case ComponentType::I16: var.type.varType = VarType::SShort; break;
-          case ComponentType::U16: var.type.varType = VarType::UShort; break;
-          case ComponentType::I32: var.type.varType = VarType::SInt; break;
-          case ComponentType::U32: var.type.varType = VarType::UInt; break;
-          case ComponentType::I64: var.type.varType = VarType::SLong; break;
-          case ComponentType::U64: var.type.varType = VarType::ULong; break;
-          case ComponentType::F16: var.type.varType = VarType::Half; break;
-          case ComponentType::F32: var.type.varType = VarType::Float; break;
-          case ComponentType::F64: var.type.varType = VarType::Double; break;
-          case ComponentType::SNormF16:
-            var.type.varType = VarType::Half;
-            RDCERR("Unexpected type in cbuffer annotations");
-            break;
-          case ComponentType::UNormF16:
-            var.type.varType = VarType::Half;
-            RDCERR("Unexpected type in cbuffer annotations");
-            break;
-          case ComponentType::SNormF32:
-            var.type.varType = VarType::Float;
-            RDCERR("Unexpected type in cbuffer annotations");
-            break;
-          case ComponentType::UNormF32:
-            var.type.varType = VarType::Float;
-            RDCERR("Unexpected type in cbuffer annotations");
-            break;
-          case ComponentType::SNormF64:
-            var.type.varType = VarType::Double;
-            RDCERR("Unexpected type in cbuffer annotations");
-            break;
-          case ComponentType::UNormF64:
-            var.type.varType = VarType::Double;
-            RDCERR("Unexpected type in cbuffer annotations");
-            break;
-        }
-      }
+      RDCASSERT(var.type.varType != VarType::Unknown);
+
+      var.type.rows = it->second.members[i].rows;
+      var.type.cols = it->second.members[i].cols;
+      var.type.varClass = (it->second.members[i].flags & TypeInfo::MemberData::RowMajor)
+                              ? CLASS_MATRIX_ROWS
+                              : CLASS_MATRIX_COLUMNS;
+
+      var.type.name = ToStr(var.type.varType);
+      var.type.name += ToStr(var.type.rows);
+      var.type.name += "x";
+      var.type.name += ToStr(var.type.cols);
+
+      var.type.bytesize =
+          VarTypeByteSize(var.type.varType) * var.type.rows * var.type.cols * var.type.elements;
     }
     else
     {
-      var.name = StringFormat::Fmt("_child%zu", i);
-      var.offset = 0;
+      var.type = MakeCBufferVariableType(typeInfo, t->members[i]);
     }
+
+    ret.bytesize = var.offset + var.type.bytesize;
+
     ret.members.push_back(var);
   }
+
+  // silently go into the inner member that's declared in this type as we only care about
+  // reflecting that actual structure
+  if(structured && t->members.size() == 1 && it->second.members.size() == 1 &&
+     it->second.members[0].name == "h")
+    return ret.members[0].type;
 
   return ret;
 }
@@ -635,19 +682,21 @@ static void AddResourceBind(DXBC::Reflection *refl, const TypeInfo &typeInfo, co
   {
     case ResourceKind::Unknown:
     case ResourceKind::SamplerComparison:
-    case ResourceKind::RTAccelerationStructure:
     case ResourceKind::CBuffer:
     case ResourceKind::Sampler:
-    case ResourceKind::FeedbackTexture2D:
-    case ResourceKind::FeedbackTexture2DArray:
       RDCERR("Unexpected %s shape %u", srv ? "SRV" : "UAV", shape);
       defName = srv ? "SRV" : "UAV";
+      break;
+    case ResourceKind::RTAccelerationStructure:
+      RDCWARN("CS or PS with RT use, not reflected");
       break;
     case ResourceKind::Texture1D:
       bind.type = srv ? ShaderInputBind::TYPE_TEXTURE : ShaderInputBind::TYPE_UAV_RWTYPED;
       defName = srv ? "Texture1D" : "RWTexture1D";
       bind.dimension = ShaderInputBind::DIM_TEXTURE1D;
       break;
+    case ResourceKind::FeedbackTexture2D:
+    // fallthrough, resource type unhandled right now
     case ResourceKind::Texture2D:
       bind.type = srv ? ShaderInputBind::TYPE_TEXTURE : ShaderInputBind::TYPE_UAV_RWTYPED;
       defName = srv ? "Texture2D" : "RWTexture2D";
@@ -673,6 +722,8 @@ static void AddResourceBind(DXBC::Reflection *refl, const TypeInfo &typeInfo, co
       defName = srv ? "Texture1DArray" : "RWTexture1DArray";
       bind.dimension = ShaderInputBind::DIM_TEXTURE1DARRAY;
       break;
+    case ResourceKind::FeedbackTexture2DArray:
+    // fallthrough, resource type unhandled right now
     case ResourceKind::Texture2DArray:
       bind.type = srv ? ShaderInputBind::TYPE_TEXTURE : ShaderInputBind::TYPE_UAV_RWTYPED;
       defName = srv ? "Texture2DArray" : "RWTexture2DArray";
@@ -780,9 +831,10 @@ DXBC::Reflection *Program::GetReflection()
 
   if(dx.valver && dx.valver->children.size() == 1 && dx.valver->children[0]->children.size() == 2)
   {
-    m_CompilerSig += StringFormat::Fmt(
-        " (Validation version %s.%s)", dx.valver->children[0]->children[0]->value.toString().c_str(),
-        dx.valver->children[0]->children[1]->value.toString().c_str());
+    m_CompilerSig +=
+        StringFormat::Fmt(" (Validation version %s.%s)",
+                          dx.valver->children[0]->children[0]->value->toString().c_str(),
+                          dx.valver->children[0]->children[1]->value->toString().c_str());
   }
 
   if(dx.entryPoints && dx.entryPoints->children.size() > 0 &&
@@ -801,8 +853,8 @@ DXBC::Reflection *Program::GetReflection()
   {
     m_Profile =
         StringFormat::Fmt("%s_%s_%s", dx.shaderModel->children[0]->children[0]->str.c_str(),
-                          dx.shaderModel->children[0]->children[1]->value.toString().c_str(),
-                          dx.shaderModel->children[0]->children[2]->value.toString().c_str());
+                          dx.shaderModel->children[0]->children[1]->value->toString().c_str(),
+                          dx.shaderModel->children[0]->children[2]->value->toString().c_str());
   }
   else
   {
@@ -1001,11 +1053,13 @@ void Program::GetLineInfo(size_t instruction, uintptr_t offset, LineColumnInfo &
 {
   lineInfo = LineColumnInfo();
 
-  for(const Function &f : m_Functions)
+  for(size_t i = 0; i < m_Functions.size(); i++)
   {
+    const Function &f = *m_Functions[i];
+
     if(instruction < f.instructions.size())
     {
-      lineInfo.disassemblyLine = f.instructions[instruction].disassemblyLine;
+      lineInfo.disassemblyLine = f.instructions[instruction]->disassemblyLine;
       break;
     }
     instruction -= f.instructions.size();

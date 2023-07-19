@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -338,7 +338,7 @@ void VulkanResourceManager::SerialiseImageStates(SerialiserType &ser,
             ImageSubresourceStateForRange p;
             p.range = st.subresourceRange;
             p.range.sliceCount = imageLayouts.imageInfo.extent.depth;
-            p.state.oldQueueFamilyIndex = st.dstQueueFamilyIndex;
+            p.state.oldQueueFamilyIndex = m_Core->RemapQueue(st.dstQueueFamilyIndex);
             p.state.newQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             p.state.oldLayout = st.newLayout;
             p.state.newLayout = imageState.GetImageInfo().initialLayout;
@@ -372,6 +372,7 @@ void VulkanResourceManager::SerialiseImageStates(SerialiserType &ser,
             // initial state to the state it was in at the beginning of the capture.
             ImageSubresourceState &state = it->state();
             state.newLayout = imageState.GetImageInfo().initialLayout;
+            state.oldQueueFamilyIndex = m_Core->RemapQueue(state.oldQueueFamilyIndex);
             state.newQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
           }
         }
@@ -993,6 +994,16 @@ MemRefs *VulkanResourceManager::FindMemRefs(ResourceId mem)
     return &it->second;
   else
     return NULL;
+}
+
+void VulkanResourceManager::Begin_PrepareInitialBatch()
+{
+  return m_Core->Begin_PrepareInitialBatch();
+}
+
+void VulkanResourceManager::End_PrepareInitialBatch()
+{
+  return m_Core->End_PrepareInitialBatch();
 }
 
 bool VulkanResourceManager::Prepare_InitialState(WrappedVkRes *res)

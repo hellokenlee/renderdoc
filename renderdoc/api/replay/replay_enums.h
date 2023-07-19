@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -2999,7 +2999,13 @@ DOCUMENT(R"(The line rasterization mode.
 
 .. data:: RectangularSmooth
 
-  Lines are rasterized as rectangles extruded from the line with coverage falloff.
+  Lines are rasterized as rectangles extruded from the line with coverage falloff being
+  implementation independent.
+
+.. data:: RectangularD3D
+
+  Lines are rasterized as rectangles extruded from the line, but with a width of 1.4 according to
+  legacy D3D behaviour
 )");
 enum class LineRaster : uint32_t
 {
@@ -3007,6 +3013,7 @@ enum class LineRaster : uint32_t
   Rectangular,
   Bresenham,
   RectangularSmooth,
+  RectangularD3D,
 };
 
 DECLARE_REFLECTION_ENUM(LineRaster);
@@ -3796,6 +3803,10 @@ a remote server.
 
   The capture file is corrupted or otherwise unrecognisable.
 
+.. data:: FileUnrecognised
+
+  The file was not recognised as any supported file type.
+
 .. data:: ImageUnsupported
 
   The image file or format is unrecognised or not supported in this form.
@@ -3854,13 +3865,13 @@ a remote server.
 
   While replaying on a remote server, the connection was lost.
 
-.. data:: ReplayOutOfMemory
+.. data:: OutOfMemory
 
-  While replaying, an out of memory error was encountered.
+  An out of memory error was encountered.
 
-.. data:: ReplayDeviceLost
+.. data:: DeviceLost
 
-  While replaying a device lost fatal error was encountered.
+  A device lost fatal error was encountered.
 
 .. data:: DataNotAvailable
 
@@ -3888,6 +3899,7 @@ enum class ResultCode : uint32_t
   FileIOFailed,
   FileIncompatibleVersion,
   FileCorrupted,
+  FileUnrecognised,
   ImageUnsupported,
   APIUnsupported,
   APIInitFailed,
@@ -3902,8 +3914,8 @@ enum class ResultCode : uint32_t
   AndroidAPKInstallFailed,
   AndroidAPKVerifyFailed,
   RemoteServerConnectionLost,
-  ReplayOutOfMemory,
-  ReplayDeviceLost,
+  OutOfMemory,
+  DeviceLost,
   DataNotAvailable,
   InvalidParameter,
   CompressionFailed,

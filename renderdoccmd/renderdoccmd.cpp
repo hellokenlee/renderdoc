@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1639,6 +1639,9 @@ int renderdoccmd(GlobalEnvironment &env, std::vector<std::string> &argv)
               "Capturing Option: Include all live resources, not just those used by a frame.");
       cmd.add("opt-capture-all-cmd-lists", 0,
               "Capturing Option: In D3D11, record all command lists from application start.");
+      cmd.add<int>("opt-soft-memory-limit", 0,
+                   "Capturing Option: Specify a soft memory limit to try to respect.", false, 0,
+                   cmdline::range(0, 10000));
     }
 
     cmd.parse_check(argv, true);
@@ -1670,6 +1673,7 @@ int renderdoccmd(GlobalEnvironment &env, std::vector<std::string> &argv)
         opts.captureAllCmdLists = true;
 
       opts.delayForDebugger = (uint32_t)cmd.get<int>("opt-delay-for-debugger");
+      opts.softMemoryLimit = (uint32_t)cmd.get<int>("opt-soft-memory-limit");
     }
 
     if(!it->second->HandlesUsageManually() && cmd.exist("help"))

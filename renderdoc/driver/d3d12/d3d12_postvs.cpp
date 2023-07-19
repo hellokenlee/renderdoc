@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -1494,6 +1494,11 @@ MeshFormat D3D12Replay::GetPostVSBuffers(uint32_t eventId, uint32_t instID, uint
     ret.indexResourceId = GetResID(s.idxBuf);
     ret.indexByteStride = s.idxFmt == DXGI_FORMAT_R16_UINT ? 2 : 4;
     ret.indexByteSize = ~0ULL;
+  }
+  else if(s.useIndices)
+  {
+    // indicate that an index buffer is still needed
+    ret.indexByteStride = 4;
   }
   else
   {

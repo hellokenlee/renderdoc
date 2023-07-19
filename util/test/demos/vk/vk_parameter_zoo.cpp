@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2022 Baldur Karlsson
+ * Copyright (c) 2019-2023 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -1740,7 +1740,8 @@ void main()
       setMarker(queue, "before_empty");
 
       {
-        VkSubmitInfo submit = vkh::SubmitInfo({});
+        std::vector<VkCommandBuffer> cmds = {};
+        VkSubmitInfo submit = vkh::SubmitInfo(cmds);
         CHECK_VKR(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE));
       }
       if(hasExt(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME))
